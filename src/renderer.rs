@@ -56,11 +56,6 @@ impl<VSInput, PSInput> Renderer<VSInput, PSInput> {
 
             vertex.pos = (self.vertex_shader)(&vs_inputs[i], &mut vertex.context);
 
-            let w = vertex.pos.w;
-            if w == 0.0 {
-                return None;
-            }
-
             vertices.push(vertex);
         }
 
@@ -182,13 +177,20 @@ impl<VSInput, PSInput> Renderer<VSInput, PSInput> {
             }
 
             if all_inside {
-                valid_vertices_index.push(i); //todo remove clone
+                valid_vertices_index.push(i);
             }
         }
 
         for v in valid_vertices_index {
-            let old_v = vertices[v].clone(); //todo 
-            valid_vertices.push(old_v);
+            let old_v = &vertices[v];
+            if old_v.pos.w == 0.0{
+                continue;
+            }
+            valid_vertices.push(old_v.clone()); // todo try to remove clone
+        }
+
+        if valid_vertices.len() < 3{
+            return None;
         }
 
         let mut triangles = vec![];
