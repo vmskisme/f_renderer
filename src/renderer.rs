@@ -1,9 +1,7 @@
-use glam::{vec3, vec4, UVec2,IVec2, Vec2, Vec3, Vec4};
+use glam::{vec3, vec4, IVec2, UVec2, Vec2, Vec3, Vec4};
+use std::cmp::{max, min};
+use std::fs;
 use std::{collections::HashMap, task::Context};
-use std::cmp::{min, max};
-use std::{fs};
-
-
 
 #[inline]
 pub fn vec4_to_u8_array(v: Vec4) -> [u8; 4] {
@@ -25,36 +23,31 @@ pub fn u8_array_to_vec4(v: [u8; 4]) -> Vec4 {
     )
 }
 
-pub fn vec3_to_vec4(v: Vec3, w: f32) -> Vec4 {
-    Vec4::new(v.x, v.y, v.z, w)
-}
-
+#[inline]
 fn is_top_left(a: IVec2, b: IVec2) -> bool {
     ((a.y == b.y) && (a.x < b.x)) || (a.y > b.y)
 }
 
-
-pub struct Renderer<VSInput, PSInput> {
+pub struct Renderer<VSInput, PSInput, VSUniform, PSUniform> {
     w: usize,
     h: usize,
-    vertex_shader: fn(&VSInput, &mut ShaderContext) -> Vec4,
-    // vs_uniform:todo!(),
-    pixel_shader: fn(&PSInput, &ShaderContext) -> Vec4,
-    // ps_uniform:todo!(),
+    vertex_shader: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4,
+    vs_uniform: VSUniform,
+    pixel_shader: fn(&PSUniform, &PSInput, &ShaderContext) -> Vec4,
+    ps_uniform: PSUniform,
 }
 
 // application -> geometry processing -> rasterization -> pixel processing
 // 看一下realtime rendering的第二章
 
-impl<VSInput, PSInput> Renderer<VSInput, PSInput> {
-    // TODO 要区分vary和uniform，不要把他们都放到VSInput里
-
-    pub fn compute_triangle(&self, vs_inputs: &[VSInput; 3]) -> Option<Vec<[Vertex; 3]>> {
+impl<VSInput, PSInput, VSUniform, PSUniform> Renderer<VSInput, PSInput, VSUniform, PSUniform> {
+    pub fn geometry_processing(&self, vs_inputs: &[VSInput; 3]) -> Option<Vec<[Vertex; 3]>> {
         let mut vertices = vec![];
+
         for i in 0..3 {
             let mut vertex = Vertex::new();
 
-            vertex.pos = (self.vertex_shader)(&vs_inputs[i], &mut vertex.context);
+            vertex.pos = (self.vertex_shader)(&self.vs_uniform, &vs_inputs[i], &mut vertex.context);
 
             vertices.push(vertex);
         }
@@ -80,8 +73,8 @@ impl<VSInput, PSInput> Renderer<VSInput, PSInput> {
                 Plane::Y_UP => vertex.pos.y <= w,
                 Plane::Y_DOWN => vertex.pos.y >= -w,
                 Plane::Z_FAR => vertex.pos.z <= vertex.pos.w,
-                Plane::Z_NEAR => vertex.pos.z >= 0.0, // <= -w
-                Plane::W_PLANE => vertex.pos.w <= EPSILON, // 现在还有问题
+                Plane::Z_NEAR => vertex.pos.z >= 0.0, // todo <= -w
+                Plane::W_PLANE => vertex.pos.w <= EPSILON, // todo 现在还有问题
             }
         }
 
@@ -100,23 +93,24 @@ impl<VSInput, PSInput> Renderer<VSInput, PSInput> {
             }
         }
 
+        #[inline]
         fn vertex_intersect(a: &Vertex, b: &Vertex, ratio: f32) -> Vertex {
-            let mut new_v = Vertex::new();
-            new_v.pos = a.pos + ratio * (b.pos - a.pos);
+            let mut new_vertex = Vertex::new();
+            new_vertex.pos = a.pos + ratio * (b.pos - a.pos);
 
             for item in a.context.varying_float.iter() {
-                let a_c = item.1;
-                let b_c = b.context.varying_float.get(item.0).unwrap();
-                new_v
+                let a_vary = item.1;
+                let b_vary = b.context.varying_float[item.0];
+                new_vertex
                     .context
                     .varying_float
-                    .insert(*item.0, a_c + ratio * (b_c - a_c));
+                    .insert(*item.0, a_vary + ratio * (b_vary - a_vary));
             }
 
             for item in a.context.varying_vec2.iter() {
                 let a_c = *item.1;
-                let b_c = *b.context.varying_vec2.get(item.0).unwrap();
-                new_v
+                let b_c = b.context.varying_vec2[item.0];
+                new_vertex
                     .context
                     .varying_vec2
                     .insert(*item.0, a_c + ratio * (b_c - a_c));
@@ -124,8 +118,8 @@ impl<VSInput, PSInput> Renderer<VSInput, PSInput> {
 
             for item in a.context.varying_vec3.iter() {
                 let a_c = *item.1;
-                let b_c = *b.context.varying_vec3.get(item.0).unwrap();
-                new_v
+                let b_c = b.context.varying_vec3[item.0];
+                new_vertex
                     .context
                     .varying_vec3
                     .insert(*item.0, a_c + ratio * (b_c - a_c));
@@ -133,14 +127,14 @@ impl<VSInput, PSInput> Renderer<VSInput, PSInput> {
 
             for item in a.context.varying_vec4.iter() {
                 let a_c = *item.1;
-                let b_c = *b.context.varying_vec4.get(item.0).unwrap();
-                new_v
+                let b_c = b.context.varying_vec4[item.0];
+                new_vertex
                     .context
                     .varying_vec4
                     .insert(*item.0, a_c + ratio * (b_c - a_c));
             }
 
-            new_v
+            new_vertex
         }
 
         let mut valid_vertices = vec![];
@@ -160,6 +154,7 @@ impl<VSInput, PSInput> Renderer<VSInput, PSInput> {
                     Plane::Y_DOWN,
                     Plane::Z_NEAR,
                     Plane::Z_FAR,
+                    // Plane::W_PLANE, // todo
                 ] {
                     let a_inside = insides(&plane, &a);
                     let b_inside = insides(&plane, &b);
@@ -182,16 +177,18 @@ impl<VSInput, PSInput> Renderer<VSInput, PSInput> {
         }
 
         for v in valid_vertices_index {
-            let old_v = &vertices[v];
-            if old_v.pos.w == 0.0{
+            let vertex = &vertices[v];
+            if vertex.pos.w == 0.0 {
                 continue;
             }
-            valid_vertices.push(old_v.clone()); // todo try to remove clone
+            valid_vertices.push(vertex.clone()); // todo try to remove clone
         }
 
-        if valid_vertices.len() < 3{
+        if valid_vertices.len() < 3 {
             return None;
         }
+
+        // todo 处理vertices的顺序
 
         let mut triangles = vec![];
 
@@ -218,8 +215,13 @@ impl<VSInput, PSInput> Renderer<VSInput, PSInput> {
             triangles.push([a, b, c]);
         }
 
-        Some(triangles)  // TODO 比不做裁剪多了非常多三角形
+        Some(triangles)
     }
+
+    fn rasterization(){
+        todo!()
+    }
+    
 }
 
 #[derive(Clone)]
@@ -262,12 +264,10 @@ impl ShaderContext {
     }
 }
 
-
-
 pub struct FrameBuffer {
     pub width: u32,
     pub height: u32,
-    pub bits: Vec<Vec<Vec4>>,
+    bits: Vec<Vec<Vec4>>,
 }
 
 impl FrameBuffer {
@@ -343,32 +343,6 @@ impl FrameBuffer {
         }
     }
 
-    pub fn merge(
-        mesh: &Vec<((u32, u32), FrameBuffer)>,
-        row_w: u32,
-        col_h: u32,
-        width: u32,
-        height: u32,
-    ) -> FrameBuffer {
-        if mesh.len() == 0 {
-            return FrameBuffer::new(0, 0);
-        }
-        let mut result = FrameBuffer::new(width, height);
-
-        for ((col, row), buf) in mesh {
-            for i in 0..buf.height {
-                for j in 0..buf.width {
-                    result.set_pixel(
-                        row * row_w + j,
-                        col * col_h + i,
-                        buf.bits[i as usize][j as usize],
-                    );
-                }
-            }
-        }
-        return result;
-    }
-
     #[inline]
     fn get_pixel(&self, x: u32, y: u32) -> Vec4 {
         self.bits[y as usize][x as usize]
@@ -398,6 +372,7 @@ impl FrameBuffer {
         )
     }
 
+    #[inline]
     pub fn set_pixel(&mut self, x: u32, y: u32, color: Vec4) {
         self.bits[y as usize][x as usize] = color;
     }
@@ -452,7 +427,6 @@ impl FrameBuffer {
         }
     }
 }
-
 
 pub struct BitMapInfoHeader {
     pub bi_size: u32,
