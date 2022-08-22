@@ -163,7 +163,7 @@ impl<VSInput, PSInput, VSUniform, PSUniform> Renderer<VSInput, PSInput, VSUnifor
                         let ratio = calculate_intersect_ratio(&plane, &a, &b);
                         let new_vertex = vertex_intersect(&a, &b, ratio);
                         if new_vertex.pos.w.abs() > EPSILON {
-                            valid_vertices.push(new_vertex);
+                            valid_vertices.push(new_vertex); // 这里的点有可能还是越界的
                         }
                     }
 
