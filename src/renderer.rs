@@ -24,6 +24,16 @@ pub fn u8_array_to_vec4(v: [u8; 4]) -> Vec4 {
 }
 
 #[inline]
+pub fn u8_array_mul_f32(v: [u8; 4], a: f32) -> [u8; 4] {
+    [
+        ((v[0] as f32) * a) as u8,
+        ((v[1] as f32) * a) as u8,
+        ((v[2] as f32) * a) as u8,
+        ((v[3] as f32) * a) as u8,
+    ]
+}
+
+#[inline]
 fn is_top_left(a: IVec2, b: IVec2) -> bool {
     ((a.y == b.y) && (a.x < b.x)) || (a.y > b.y)
 }
@@ -218,10 +228,9 @@ impl<VSInput, PSInput, VSUniform, PSUniform> Renderer<VSInput, PSInput, VSUnifor
         Some(triangles)
     }
 
-    fn rasterization(){
+    fn rasterization() {
         todo!()
     }
-    
 }
 
 #[derive(Clone)]
@@ -267,7 +276,7 @@ impl ShaderContext {
 pub struct FrameBuffer {
     pub width: u32,
     pub height: u32,
-    bits: Vec<Vec<Vec4>>,
+    bits: Vec<u8>,
 }
 
 impl FrameBuffer {
@@ -275,77 +284,35 @@ impl FrameBuffer {
         return FrameBuffer {
             width: width,
             height: height,
-            bits: vec![vec![Vec4::ZERO; width as usize]; height as usize],
+            bits: vec![0; (width * height * 4) as usize],
         };
     }
 
-    pub fn fill(&mut self, color: Vec4) {
-        for i in 0..self.height as usize {
-            for j in 0..self.width as usize {
-                self.bits[i][j] = color;
+    pub fn fill(&mut self, color: [u8; 4]) {
+        for i in 0..self.height {
+            for j in 0..self.width {
+                self.set_pixel(j, i, color);
             }
-        }
-    }
-
-    pub fn load_file(path: &str) -> Self {
-        let mut buf = fs::read(path).unwrap();
-        if buf[0] != 0x42 || buf[1] != 0x4d {
-            panic!("bmp error");
-        }
-
-        let offset = u32::from_le_bytes([buf[10], buf[11], buf[12], buf[13]]);
-
-        let info = BitMapInfoHeader {
-            bi_size: u32::from_le_bytes([buf[14], buf[15], buf[16], buf[17]]),
-            bi_width: u32::from_le_bytes([buf[18], buf[19], buf[20], buf[21]]),
-            bi_height: u32::from_le_bytes([buf[22], buf[23], buf[24], buf[25]]),
-            bi_planes: u16::from_le_bytes([buf[26], buf[27]]),
-            bi_bit_count: u16::from_le_bytes([buf[28], buf[29]]),
-            bi_compression: u32::from_le_bytes([buf[30], buf[31], buf[32], buf[33]]),
-            bi_size_image: u32::from_le_bytes([buf[34], buf[35], buf[36], buf[37]]),
-            bi_x_pels_per_meter: u32::from_le_bytes([buf[37], buf[38], buf[39], buf[40]]),
-            bi_y_pels_per_meter: u32::from_le_bytes([buf[41], buf[42], buf[43], buf[44]]),
-            bi_clr_used: u32::from_le_bytes([buf[14], buf[45], buf[46], buf[47]]),
-            bi_clr_important: u32::from_le_bytes([buf[48], buf[49], buf[50], buf[51]]),
-        };
-
-        let pixel_size: u32 = if info.bi_bit_count == 24 { 3 } else { 4 };
-        let pitch = (info.bi_width * pixel_size + 3) & (!3);
-        let padding = (pitch - info.bi_width * pixel_size) as usize;
-
-        let mut bits = vec![vec![Vec4::ZERO; info.bi_width as usize]; info.bi_height as usize];
-        let mut index = offset as usize;
-
-        for y in 0..info.bi_height as usize {
-            for x in 0..info.bi_width as usize {
-                let color;
-                if pixel_size == 3 {
-                    color = u8_array_to_vec4([buf[index + 2], buf[index + 1], buf[index], 255]);
-                } else {
-                    color = u8_array_to_vec4([
-                        buf[index + 2],
-                        buf[index + 1],
-                        buf[index],
-                        buf[index + 3],
-                    ]);
-                }
-                bits[y][x] = color;
-                index += pixel_size as usize;
-            }
-
-            index += padding;
-        }
-
-        Self {
-            width: info.bi_width,
-            height: info.bi_height,
-            bits: bits,
         }
     }
 
     #[inline]
-    fn get_pixel(&self, x: u32, y: u32) -> Vec4 {
-        self.bits[y as usize][x as usize]
+    pub fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
+        let offset = (y * self.width * 4 + x * 4) as usize;
+        for i in 0..4 {
+            self.bits[offset + i] = color[i];
+        }
+    }
+
+    #[inline]
+    fn get_pixel(&self, x: u32, y: u32) -> [u8; 4] {
+        let offset = (y * self.width * 4 + x * 4) as usize;
+        [
+            self.bits[offset],
+            self.bits[offset + 1],
+            self.bits[offset + 2],
+            self.bits[offset + 3],
+        ]
     }
 
     pub fn sample_2d(&self, uv: Vec2) -> Vec4 {
@@ -359,10 +326,10 @@ impl FrameBuffer {
         let x2 = (x1 + 1).clamp(0, self.width - 1);
         let y2 = (y1 + 1).clamp(0, self.width - 1);
 
-        let c11 = self.get_pixel(x1, y1) * (1.0 - a) * (1.0 - b);
-        let c12 = self.get_pixel(x1, y2) * (1.0 - a) * b;
-        let c21 = self.get_pixel(x2, y1) * a * (1.0 - b);
-        let c22 = self.get_pixel(x2, y2) * a * b;
+        let c11 = u8_array_to_vec4(self.get_pixel(x1, y1)) * (1.0 - a) * (1.0 - b);
+        let c12 = u8_array_to_vec4(self.get_pixel(x1, y2)) * (1.0 - a) * b;
+        let c21 = u8_array_to_vec4(self.get_pixel(x2, y1)) * a * (1.0 - b);
+        let c22 = u8_array_to_vec4(self.get_pixel(x2, y2)) * a * b;
 
         vec4(
             c11.x + c12.x + c21.x + c22.x,
@@ -372,12 +339,7 @@ impl FrameBuffer {
         )
     }
 
-    #[inline]
-    pub fn set_pixel(&mut self, x: u32, y: u32, color: Vec4) {
-        self.bits[y as usize][x as usize] = color;
-    }
-
-    pub fn draw_line(&mut self, x1: u32, y1: u32, x2: u32, y2: u32, color: Vec4) {
+    pub fn draw_line(&mut self, x1: u32, y1: u32, x2: u32, y2: u32, color: [u8; 4]) {
         let (x1, x2) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
         let (y1, y2) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
         match (x1 == x2, y1 == y2) {
@@ -426,18 +388,4 @@ impl FrameBuffer {
             }
         }
     }
-}
-
-pub struct BitMapInfoHeader {
-    pub bi_size: u32,
-    pub bi_width: u32,
-    pub bi_height: u32,
-    pub bi_planes: u16,
-    pub bi_bit_count: u16,
-    pub bi_compression: u32,
-    pub bi_size_image: u32,
-    pub bi_x_pels_per_meter: u32,
-    pub bi_y_pels_per_meter: u32,
-    pub bi_clr_used: u32,
-    pub bi_clr_important: u32,
 }
