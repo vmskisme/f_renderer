@@ -178,7 +178,10 @@ fn main() {
                 .swapchain_loader
                 .get_swapchain_images(base.swapchain)
                 .unwrap();
-            
+
+            frame_buffer.fill([70, 70, 70, 255]);
+            depth_buffer = vec![vec![0.0; WIDTH as usize]; HEIGHT as usize];
+
             let init_elapsed = now.elapsed().unwrap().as_secs_f32();
             mat_view = set_look_at(
                 Vec3::new(init_elapsed.sin() * 3.0, 0.0, init_elapsed.cos() * 3.0),
@@ -186,13 +189,11 @@ fn main() {
                 Vec3::new(0.0, 1.0, 0.0),
             );
 
-
             vs_uniform.view = mat_view;
             test_renderer.set_vs_uniform(vs_uniform);
 
             let vertices = test_renderer.geometry_processing(&triangle).unwrap();
-            frame_buffer.clear();
-            depth_buffer = vec![vec![0.0; WIDTH as usize]; HEIGHT as usize];
+
             for vertex_s in vertices {
                 test_renderer.rasterization(
                     (0, WIDTH as i32),
