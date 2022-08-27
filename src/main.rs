@@ -2,7 +2,7 @@ mod matrix_util;
 mod renderer;
 mod vulkan_base;
 
-use glam::{vec3, vec4, IVec2, Mat4, UVec2, Vec2, Vec3, Vec4};
+use glam::{IVec2, Mat4, UVec2, Vec2, Vec3, Vec4};
 use matrix_util::{mul_vec4, set_identity, set_look_at, set_perspective, set_scale};
 use renderer::{u8_array_to_vec4, vec4_to_u8_array, FrameBuffer, Renderer, ShaderContext};
 
@@ -289,102 +289,3 @@ fn main() {
     }
 }
 
-use std::fs::File;
-use std::io::prelude::*;
-use std::path::Path;
-fn save_file(frame_buffer: &FrameBuffer) {
-    let path = Path::new("out/lorem_ipsum.bmp");
-    let display = path.display();
-
-    let with_alpha = true;
-
-    let mut file = match File::create(&path) {
-        Err(why) => panic!("couldn't create {}: {:?}", display, why),
-        Ok(file) => file,
-    };
-
-    let width: u32 = frame_buffer.width;
-    let height: u32 = frame_buffer.height;
-    let pixel_size = if with_alpha { 3 } else { 3 } as u32;
-    let pitch = (width * pixel_size + 3) & (!3);
-    let info = BitMapInfoHeader {
-        bi_size: 40,
-        bi_width: width,
-        bi_height: height,
-        bi_planes: 1,
-        bi_bit_count: if with_alpha { 32 } else { 24 },
-        bi_compression: 0,
-        bi_size_image: pitch * height,
-        bi_x_pels_per_meter: 0xb12,
-        bi_y_pels_per_meter: 0xb12,
-        bi_clr_used: 0,
-        bi_clr_important: 0,
-    };
-
-    let offset = 54 as u32;
-    let bf_size = info.bi_size_image + offset;
-    let zero = 0 as u32;
-
-    file.write_all(&[0x42]).expect("write error");
-    file.write_all(&[0x4d]).expect("write error");
-    file.write_all(&bf_size.to_le_bytes()).expect("write error");
-    file.write_all(&zero.to_le_bytes()).expect("write error");
-    file.write_all(&offset.to_le_bytes()).expect("write error");
-
-    file.write_all(&info.bi_size.to_le_bytes())
-        .expect("write error");
-    file.write_all(&info.bi_width.to_le_bytes())
-        .expect("write error");
-    file.write_all(&info.bi_height.to_le_bytes())
-        .expect("write error");
-    file.write_all(&info.bi_planes.to_le_bytes())
-        .expect("write error");
-    file.write_all(&info.bi_bit_count.to_le_bytes())
-        .expect("write error");
-    file.write_all(&info.bi_compression.to_le_bytes())
-        .expect("write error");
-    file.write_all(&info.bi_size_image.to_le_bytes())
-        .expect("write error");
-    file.write_all(&info.bi_x_pels_per_meter.to_le_bytes())
-        .expect("write error");
-    file.write_all(&info.bi_y_pels_per_meter.to_le_bytes())
-        .expect("write error");
-    file.write_all(&info.bi_clr_used.to_le_bytes())
-        .expect("write error");
-    file.write_all(&info.bi_clr_important.to_le_bytes())
-        .expect("write error");
-
-    let padding: u32 = pitch - width * pixel_size;
-
-    for y in 0..height {
-        for x in 0..width {
-            let color = frame_buffer.get_pixel(x, y);
-            if with_alpha {
-                file.write_all(&[color[2], color[1], color[0], color[3]])
-                    .expect("write error");
-            } else {
-                file.write_all(&[color[2], color[1], color[0]])
-                    .expect("write error");
-            }
-        }
-        let mut i = 0;
-        while i < padding {
-            file.write_all(&[0 as u8; 16]).expect("write error");
-            i += 16;
-        }
-    }
-}
-
-pub struct BitMapInfoHeader {
-    pub bi_size: u32,
-    pub bi_width: u32,
-    pub bi_height: u32,
-    pub bi_planes: u16,
-    pub bi_bit_count: u16,
-    pub bi_compression: u32,
-    pub bi_size_image: u32,
-    pub bi_x_pels_per_meter: u32,
-    pub bi_y_pels_per_meter: u32,
-    pub bi_clr_used: u32,
-    pub bi_clr_important: u32,
-}
