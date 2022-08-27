@@ -24,23 +24,52 @@ pub fn u8_array_to_vec4(v: [u8; 4]) -> Vec4 {
 }
 
 #[inline]
+pub fn u8_array_mul_f32(v: [u8; 4], a: f32) -> [u8; 4] {
+    [
+        ((v[0] as f32) * a) as u8,
+        ((v[1] as f32) * a) as u8,
+        ((v[2] as f32) * a) as u8,
+        ((v[3] as f32) * a) as u8,
+    ]
+}
+
+#[inline]
 fn is_top_left(a: IVec2, b: IVec2) -> bool {
     ((a.y == b.y) && (a.x < b.x)) || (a.y > b.y)
 }
 
-pub struct Renderer<VSInput, PSInput, VSUniform, PSUniform> {
-    w: usize,
-    h: usize,
+pub struct Renderer<VSInput, VSUniform, PSUniform> {
+    w: u32,
+    h: u32,
     vertex_shader: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4,
     vs_uniform: VSUniform,
-    pixel_shader: fn(&PSUniform, &PSInput, &ShaderContext) -> Vec4,
+    pixel_shader: fn(&PSUniform, &ShaderContext) -> Vec4,
     ps_uniform: PSUniform,
 }
 
 // application -> geometry processing -> rasterization -> pixel processing
 // 看一下realtime rendering的第二章
 
-impl<VSInput, PSInput, VSUniform, PSUniform> Renderer<VSInput, PSInput, VSUniform, PSUniform> {
+impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
+    pub fn new(
+        w: u32,
+        h: u32,
+        vs_uniform: VSUniform,
+        vs: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4,
+        ps_uniform: PSUniform,
+        ps: fn(&PSUniform, &ShaderContext) -> Vec4,
+    ) -> Self {
+        Self { w: w, h: h, vertex_shader: vs, vs_uniform: vs_uniform, pixel_shader: ps, ps_uniform: ps_uniform }
+    }
+
+    pub fn set_vs_uniform(&mut self, vs_uniform: VSUniform){
+        self.vs_uniform = vs_uniform;
+    }
+
+    pub fn set_ps_uniform(&mut self, ps_uniform: PSUniform){
+        self.ps_uniform = ps_uniform;
+    }
+
     pub fn geometry_processing(&self, vs_inputs: &[VSInput; 3]) -> Option<Vec<[Vertex; 3]>> {
         let mut vertices = vec![];
 
@@ -218,10 +247,154 @@ impl<VSInput, PSInput, VSUniform, PSUniform> Renderer<VSInput, PSInput, VSUnifor
         Some(triangles)
     }
 
-    fn rasterization(){
-        todo!()
+    pub fn rasterization(
+        &self,
+        width_range: (i32, i32),
+        height_range: (i32, i32),
+        triangle: &[Vertex; 3],
+        frame_buffer: &mut FrameBuffer,
+        depth_buffer: &mut Vec<Vec<f32>>,
+    ) {
+        let (mut min_x, mut max_x, mut min_y, mut max_y) = (0, 0, 0, 0);
+
+        for k in 0..3 {
+            let vertex = &triangle[k];
+
+            if k == 0 {
+                min_x = vertex.spi.x.clamp(width_range.0, width_range.1);
+                max_x = min_x;
+
+                max_y = vertex.spi.y.clamp(height_range.0, height_range.1);
+                min_y = max_y;
+            } else {
+                min_x = min(min_x, vertex.spi.x).clamp(width_range.0, width_range.1);
+                max_x = max(max_x, vertex.spi.x).clamp(width_range.0, width_range.1);
+
+                min_y = min(min_y, vertex.spi.y).clamp(height_range.0, height_range.1);
+                max_y = max(max_y, vertex.spi.y).clamp(height_range.0, height_range.1);
+            }
+        }
+
+        let v01 = triangle[1].pos - triangle[0].pos;
+        let v02 = triangle[2].pos - triangle[0].pos;
+
+        let v01 = Vec3::new(v01.x, v01.y, v01.z);
+        let v02 = Vec3::new(v02.x, v02.y, v02.z);
+        let normal = v01.cross(v02);
+
+        let mut vtx = [&triangle[0], &triangle[1], &triangle[2]];
+
+        if normal.z > 0.0 {
+            vtx[1] = &triangle[2];
+            vtx[2] = &triangle[1];
+        }
+
+        let p0 = vtx[0].spi;
+        let p1 = vtx[1].spi;
+        let p2 = vtx[2].spi;
+
+        let top_left_01 = is_top_left(p0, p1);
+        let top_left_12 = is_top_left(p1, p2);
+        let top_left_20 = is_top_left(p2, p0);
+
+        for cy in min_y..max_y {
+            let index_y = (cy - height_range.0) as usize;
+            for cx in min_x..max_x {
+                let px = Vec2::new(cx as f32 + 0.5, cy as f32 + 0.5);
+                let index_x = (cx - width_range.0) as usize;
+                // Edge Equation
+                // 使用整数避免浮点误差，同时因为是左手系，所以符号取反
+                let E01 = -(cx - p0.x) * (p1.y - p0.y) + (cy - p0.y) * (p1.x - p0.x);
+                let E12 = -(cx - p1.x) * (p2.y - p1.y) + (cy - p1.y) * (p2.x - p1.x);
+                let E20 = -(cx - p2.x) * (p0.y - p2.y) + (cy - p2.y) * (p0.x - p2.x);
+
+                if E01 < if top_left_01 { 0 } else { 1 } {
+                    continue;
+                }
+                if E12 < if top_left_12 { 0 } else { 1 } {
+                    continue;
+                }
+                if E20 < if top_left_20 { 0 } else { 1 } {
+                    continue;
+                }
+
+                let s0 = vtx[0].spf - px;
+                let s1 = vtx[1].spf - px;
+                let s2 = vtx[2].spf - px;
+
+                let mut a = s1.perp_dot(s2).abs();
+                let mut b = s2.perp_dot(s0).abs();
+                let mut c = s0.perp_dot(s1).abs();
+
+                let s = a + b + c;
+                if s == 0.0 {
+                    continue;
+                }
+
+                a = a * (1.0 / s);
+                b = b * (1.0 / s);
+                c = c * (1.0 / s);
+
+                let rhw = vtx[0].rhw * a + vtx[1].rhw * b + vtx[2].rhw * c;
+
+                if rhw < depth_buffer[index_y][index_x] {
+                    continue;
+                }
+                depth_buffer[index_y][index_x] = rhw;
+
+                let w = 1.0 / if rhw != 0.0 { rhw } else { 1.0 };
+
+                let c0 = vtx[0].rhw * a * w;
+                let c1 = vtx[1].rhw * b * w;
+                let c2 = vtx[2].rhw * c * w;
+
+                let mut input = ShaderContext::new();
+
+                let i0 = &vtx[0].context;
+                let i1 = &vtx[1].context;
+                let i2 = &vtx[2].context;
+
+                for item in i0.varying_float.iter() {
+                    let f0 = i0.varying_float[item.0];
+                    let f1 = i1.varying_float[item.0];
+                    let f2 = i2.varying_float[item.0];
+                    input
+                        .varying_float
+                        .insert(*item.0, c0 * f0 + c1 * f1 + c2 * f2);
+                }
+
+                for item in i0.varying_vec2.iter() {
+                    let f0 = i0.varying_vec2[item.0];
+                    let f1 = i1.varying_vec2[item.0];
+                    let f2 = i2.varying_vec2[item.0];
+                    input
+                        .varying_vec2
+                        .insert(*item.0, c0 * f0 + c1 * f1 + c2 * f2);
+                }
+
+                for item in i0.varying_vec3.iter() {
+                    let f0 = i0.varying_vec3[item.0];
+                    let f1 = i1.varying_vec3[item.0];
+                    let f2 = i2.varying_vec3[item.0];
+                    input
+                        .varying_vec3
+                        .insert(*item.0, c0 * f0 + c1 * f1 + c2 * f2);
+                }
+
+                for item in i0.varying_vec4.iter() {
+                    let f0 = i0.varying_vec4[item.0];
+                    let f1 = i1.varying_vec4[item.0];
+                    let f2 = i2.varying_vec4[item.0];
+                    input
+                        .varying_vec4
+                        .insert(*item.0, c0 * f0 + c1 * f1 + c2 * f2);
+                }
+
+                let color = (self.pixel_shader)(&self.ps_uniform, &input);
+                frame_buffer.set_pixel(index_x as u32, index_y as u32, vec4_to_u8_array(color));
+            }
+        }
     }
-    
 }
 
 #[derive(Clone)]
@@ -267,7 +440,7 @@ impl ShaderContext {
 pub struct FrameBuffer {
     pub width: u32,
     pub height: u32,
-    bits: Vec<Vec<Vec4>>,
+    pub bits: Vec<u8>,
 }
 
 impl FrameBuffer {
@@ -275,77 +448,43 @@ impl FrameBuffer {
         return FrameBuffer {
             width: width,
             height: height,
-            bits: vec![vec![Vec4::ZERO; width as usize]; height as usize],
+            bits: vec![0; (width * height * 4) as usize],
         };
     }
 
-    pub fn fill(&mut self, color: Vec4) {
-        for i in 0..self.height as usize {
-            for j in 0..self.width as usize {
-                self.bits[i][j] = color;
-            }
-        }
+    pub fn clear(&mut self){
+        self.bits = vec![0; (self.width * self.height * 4) as usize];
     }
 
-    pub fn load_file(path: &str) -> Self {
-        let mut buf = fs::read(path).unwrap();
-        if buf[0] != 0x42 || buf[1] != 0x4d {
-            panic!("bmp error");
-        }
+    pub fn get_size(&self) -> u32{
+        self.width * self.height * 4
+    }
 
-        let offset = u32::from_le_bytes([buf[10], buf[11], buf[12], buf[13]]);
-
-        let info = BitMapInfoHeader {
-            bi_size: u32::from_le_bytes([buf[14], buf[15], buf[16], buf[17]]),
-            bi_width: u32::from_le_bytes([buf[18], buf[19], buf[20], buf[21]]),
-            bi_height: u32::from_le_bytes([buf[22], buf[23], buf[24], buf[25]]),
-            bi_planes: u16::from_le_bytes([buf[26], buf[27]]),
-            bi_bit_count: u16::from_le_bytes([buf[28], buf[29]]),
-            bi_compression: u32::from_le_bytes([buf[30], buf[31], buf[32], buf[33]]),
-            bi_size_image: u32::from_le_bytes([buf[34], buf[35], buf[36], buf[37]]),
-            bi_x_pels_per_meter: u32::from_le_bytes([buf[37], buf[38], buf[39], buf[40]]),
-            bi_y_pels_per_meter: u32::from_le_bytes([buf[41], buf[42], buf[43], buf[44]]),
-            bi_clr_used: u32::from_le_bytes([buf[14], buf[45], buf[46], buf[47]]),
-            bi_clr_important: u32::from_le_bytes([buf[48], buf[49], buf[50], buf[51]]),
-        };
-
-        let pixel_size: u32 = if info.bi_bit_count == 24 { 3 } else { 4 };
-        let pitch = (info.bi_width * pixel_size + 3) & (!3);
-        let padding = (pitch - info.bi_width * pixel_size) as usize;
-
-        let mut bits = vec![vec![Vec4::ZERO; info.bi_width as usize]; info.bi_height as usize];
-        let mut index = offset as usize;
-
-        for y in 0..info.bi_height as usize {
-            for x in 0..info.bi_width as usize {
-                let color;
-                if pixel_size == 3 {
-                    color = u8_array_to_vec4([buf[index + 2], buf[index + 1], buf[index], 255]);
-                } else {
-                    color = u8_array_to_vec4([
-                        buf[index + 2],
-                        buf[index + 1],
-                        buf[index],
-                        buf[index + 3],
-                    ]);
-                }
-                bits[y][x] = color;
-                index += pixel_size as usize;
+    pub fn fill(&mut self, color: [u8; 4]) {
+        for i in 0..self.height {
+            for j in 0..self.width {
+                self.set_pixel(j, i, color);
             }
-
-            index += padding;
-        }
-
-        Self {
-            width: info.bi_width,
-            height: info.bi_height,
-            bits: bits,
         }
     }
 
     #[inline]
-    fn get_pixel(&self, x: u32, y: u32) -> Vec4 {
-        self.bits[y as usize][x as usize]
+    pub fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
+        let offset = (y * self.width * 4 + x * 4) as usize;
+        for i in 0..4 { //todo 这样存y会反过来
+            self.bits[offset + i] = color[i];
+        }
+    }
+
+    #[inline]
+    pub fn get_pixel(&self, x: u32, y: u32) -> [u8; 4] {
+        let offset = (y * self.width * 4 + x * 4) as usize;
+        [
+            self.bits[offset],
+            self.bits[offset + 1],
+            self.bits[offset + 2],
+            self.bits[offset + 3],
+        ]
     }
 
     pub fn sample_2d(&self, uv: Vec2) -> Vec4 {
@@ -359,10 +498,10 @@ impl FrameBuffer {
         let x2 = (x1 + 1).clamp(0, self.width - 1);
         let y2 = (y1 + 1).clamp(0, self.width - 1);
 
-        let c11 = self.get_pixel(x1, y1) * (1.0 - a) * (1.0 - b);
-        let c12 = self.get_pixel(x1, y2) * (1.0 - a) * b;
-        let c21 = self.get_pixel(x2, y1) * a * (1.0 - b);
-        let c22 = self.get_pixel(x2, y2) * a * b;
+        let c11 = u8_array_to_vec4(self.get_pixel(x1, y1)) * (1.0 - a) * (1.0 - b);
+        let c12 = u8_array_to_vec4(self.get_pixel(x1, y2)) * (1.0 - a) * b;
+        let c21 = u8_array_to_vec4(self.get_pixel(x2, y1)) * a * (1.0 - b);
+        let c22 = u8_array_to_vec4(self.get_pixel(x2, y2)) * a * b;
 
         vec4(
             c11.x + c12.x + c21.x + c22.x,
@@ -372,12 +511,7 @@ impl FrameBuffer {
         )
     }
 
-    #[inline]
-    pub fn set_pixel(&mut self, x: u32, y: u32, color: Vec4) {
-        self.bits[y as usize][x as usize] = color;
-    }
-
-    pub fn draw_line(&mut self, x1: u32, y1: u32, x2: u32, y2: u32, color: Vec4) {
+    pub fn draw_line(&mut self, x1: u32, y1: u32, x2: u32, y2: u32, color: [u8; 4]) {
         let (x1, x2) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
         let (y1, y2) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
         match (x1 == x2, y1 == y2) {
@@ -426,18 +560,4 @@ impl FrameBuffer {
             }
         }
     }
-}
-
-pub struct BitMapInfoHeader {
-    pub bi_size: u32,
-    pub bi_width: u32,
-    pub bi_height: u32,
-    pub bi_planes: u16,
-    pub bi_bit_count: u16,
-    pub bi_compression: u32,
-    pub bi_size_image: u32,
-    pub bi_x_pels_per_meter: u32,
-    pub bi_y_pels_per_meter: u32,
-    pub bi_clr_used: u32,
-    pub bi_clr_important: u32,
 }
