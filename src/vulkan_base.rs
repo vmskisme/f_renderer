@@ -1,8 +1,8 @@
 use ash::util::*;
-use std::time::Instant;
 use ash::vk;
 use std::default::Default;
 use std::ffi::CStr;
+use std::time::Instant;
 use winit;
 
 use ash::extensions::{
@@ -17,14 +17,13 @@ use std::cell::RefCell;
 use std::ops::Drop;
 use std::os::raw::c_char;
 
-
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use ash::vk::{
     KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
 };
 
 use winit::{
-    event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
+    event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     platform::run_return::EventLoopExtRunReturn,
     window::WindowBuilder,
@@ -41,7 +40,6 @@ macro_rules! offset_of {
         }
     }};
 }
-
 
 /// Helper function for submitting command buffers. Immediately waits for the fence before the command buffer
 /// is executed. That way we can delay the waiting for the fences by 1 frame which is good for performance.
@@ -191,19 +189,41 @@ impl VulkanBase {
                 *control_flow = ControlFlow::Poll;
                 match event {
                     Event::WindowEvent {
+                        event: WindowEvent::CloseRequested,
+                        ..
+                    } => *control_flow = ControlFlow::Exit,
+                    Event::WindowEvent {
                         event:
-                            WindowEvent::CloseRequested
-                            | WindowEvent::KeyboardInput {
-                                input:
-                                    KeyboardInput {
-                                        state: ElementState::Pressed,
-                                        virtual_keycode: Some(VirtualKeyCode::Escape),
-                                        ..
-                                    },
+                            WindowEvent::MouseInput {
+                                state: ElementState::Pressed,
+                                button: MouseButton::Right,
                                 ..
                             },
                         ..
-                    } => *control_flow = ControlFlow::Exit,
+                    } => {
+                        if let Event::WindowEvent { window_id, event } = event {
+                            if let WindowEvent::MouseInput { device_id, state, button, modifiers } = event {
+                                match button {
+                                    MouseButton::Right=>{ //todo
+                                     },
+                                    MouseButton::Left=>{},
+                                    _ =>{}
+                                }
+                            }
+                        }
+                    }
+                    Event::WindowEvent {
+                        event: WindowEvent::CursorMoved { .. },
+                        ..
+                    } => {
+                        if let Event::WindowEvent { event, .. } = event {
+                            if let WindowEvent::CursorMoved { position, .. } = event {
+                                let x = position.x;
+                                let y = position.y;
+                                println!("{} {}", x, y);
+                            }
+                        }
+                    }
                     Event::MainEventsCleared => f(),
                     _ => (),
                 }
@@ -566,3 +586,5 @@ impl Drop for VulkanBase {
         }
     }
 }
+
+

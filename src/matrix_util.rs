@@ -45,7 +45,8 @@ pub fn mul_vec4(mat: Mat4, vec: Vec4) -> Vec4 {
 }
 
 #[inline]
-pub fn set_rotate(x: f32, y: f32, z: f32, theta: f32) -> Mat4 {
+pub fn set_rotate(axis: Vec3, theta: f32) -> Mat4 {
+    let (x,y,z) = (axis.x,axis.y,axis.z);
     let q_sin = (theta * 0.5).sin();
     let q_cos = (theta * 0.5).cos();
     let w = q_cos;
