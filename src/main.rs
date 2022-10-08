@@ -5,8 +5,8 @@ mod renderer;
 mod vulkan_base;
 
 use camera::Camera;
-use glam::{IVec2, Mat4, UVec2, Vec2, Vec3, Vec4};
-use matrix_util::{mul_vec4, set_identity, set_look_at, set_perspective, set_scale};
+use glam::{Mat4, Vec3, Vec4};
+use matrix_util::{mul_vec4, set_identity, set_look_at, set_perspective, set_scale, set_rotate};
 use renderer::{u8_array_to_vec4, vec4_to_u8_array, FrameBuffer, Renderer, ShaderContext};
 
 use ash::util::*;
@@ -23,11 +23,10 @@ use winit::{
     window::WindowBuilder,
 };
 
-use crate::matrix_util::set_rotate;
 
 fn main() {
-    const WIDTH: u32 = 1920;
-    const HEIGHT: u32 = 1080;
+    const WIDTH: u32 = 960;
+    const HEIGHT: u32 = 540;
 
     #[derive(Clone, Copy)]
     struct VSUniform {
@@ -367,7 +366,7 @@ fn main() {
                             .unwrap();
 
                         let elapsed_time = start_time.elapsed();
-                        // println!("fps: {}", 1.0 / elapsed_time.as_secs_f32());
+                        println!("fps: {}", 1.0 / elapsed_time.as_secs_f32());
                     }
                     _ => (),
                 }

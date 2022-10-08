@@ -47,8 +47,6 @@ pub struct Renderer<VSInput, VSUniform, PSUniform> {
     ps_uniform: PSUniform,
 }
 
-// application -> geometry processing -> rasterization -> pixel processing
-// 看一下realtime rendering的第二章
 
 impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
     pub fn new(
