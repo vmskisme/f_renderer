@@ -191,7 +191,27 @@ fn main() {
                     Event::WindowEvent {
                         event: WindowEvent::MouseWheel { delta, phase, .. },
                         ..
-                    } => {}
+                    } => {
+                        use winit::event::MouseScrollDelta::*;
+                        match delta {
+                            LineDelta(x, y) => {
+                                let mut forward = (camera_1.eye - camera_1.at).normalize();
+                                let distance = camera_1.eye.distance(camera_1.at);
+                                if (2.0 < distance && y > 0.0) || (distance < 20.0 && y < 0.0){
+                                    forward = forward * (distance - y * 0.2);
+                                    let new_eye = forward + camera_1.at;
+                                    camera_1.eye = new_eye;
+                                    camera_1.set_look_at();
+
+                                    vs_uniform.view = camera_1.mat_look_at;
+                                    test_renderer.set_vs_uniform(vs_uniform);
+                                }
+                            }
+                            PixelDelta(p) => {
+
+                            }
+                        }
+                    }
                     Event::WindowEvent {
                         event:
                             WindowEvent::MouseInput {
@@ -231,16 +251,15 @@ fn main() {
                                     let theta_h = (x - cursor_pos.0) * 0.005;
                                     let theta_v = -(y - cursor_pos.1) * 0.005;
 
-                                    let rotate_horizon_mat =
-                                        set_rotate(camera_1.up, theta_h * PI);
-                                    let rotate_vertical_mat =
-                                        set_rotate(right, theta_v * PI);
+                                    let rotate_horizon_mat = set_rotate(camera_1.up, theta_h * PI);
+                                    let rotate_vertical_mat = set_rotate(right, theta_v * PI);
 
                                     forward = mul_vec4(rotate_horizon_mat, forward);
                                     forward = mul_vec4(rotate_vertical_mat, forward);
                                     let new_forward = Vec3::new(forward.x, forward.y, forward.z);
                                     camera_1.up = right.cross(new_forward).normalize();
-                                    camera_1.eye = camera_1.at - Vec3::new(forward.x, forward.y, forward.z);
+                                    camera_1.eye =
+                                        camera_1.at - Vec3::new(forward.x, forward.y, forward.z);
 
                                     camera_1.set_look_at();
 
@@ -277,7 +296,7 @@ fn main() {
                         if option_vertices.is_some() {
                             vertices = option_vertices.unwrap();
                         }
-
+                        
                         for vertex_s in vertices {
                             test_renderer.rasterization(
                                 (0, WIDTH as i32),
@@ -287,6 +306,7 @@ fn main() {
                                 &mut depth_buffer,
                             );
                         }
+   
                         image_slice.copy_from_slice(&frame_buffer.bits);
 
                         let swap_chain_image = present_images[present_index as usize];
@@ -367,7 +387,7 @@ fn main() {
                             .unwrap();
 
                         let elapsed_time = start_time.elapsed();
-                        // println!("fps: {}", 1.0 / elapsed_time.as_secs_f32());
+                        println!("fps: {}", 1.0 / elapsed_time.as_secs_f32());
                     }
                     _ => (),
                 }
