@@ -47,8 +47,6 @@ pub struct Renderer<VSInput, VSUniform, PSUniform> {
     ps_uniform: PSUniform,
 }
 
-// application -> geometry processing -> rasterization -> pixel processing
-// 看一下realtime rendering的第二章
 
 impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
     pub fn new(
@@ -68,6 +66,14 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
 
     pub fn set_ps_uniform(&mut self, ps_uniform: PSUniform){
         self.ps_uniform = ps_uniform;
+    }
+
+    pub fn set_vertex_shader(&mut self, vs: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4){
+        self.vertex_shader = vs;
+    }
+
+    pub fn set_pixel_shader(&mut self, ps: fn(&PSUniform, &ShaderContext) -> Vec4){
+        self.pixel_shader = ps;
     }
 
     pub fn geometry_processing(&self, vs_inputs: &[VSInput; 3]) -> Option<Vec<[Vertex; 3]>> {
