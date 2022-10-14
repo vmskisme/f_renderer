@@ -5,7 +5,7 @@ mod renderer;
 mod vulkan_base;
 
 use camera::Camera;
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec3, Vec4, Vec2};
 use matrix_util::{mul_vec4, set_identity, set_look_at, set_perspective, set_scale, set_rotate};
 use renderer::{u8_array_to_vec4, vec4_to_u8_array, FrameBuffer, Renderer, ShaderContext};
 
@@ -25,8 +25,8 @@ use winit::{
 
 
 fn main() {
-    const WIDTH: u32 = 960;
-    const HEIGHT: u32 = 540;
+    const WIDTH: u32 = 1920;
+    const HEIGHT: u32 = 1080;
 
     #[derive(Clone, Copy)]
     struct VSUniform {
@@ -85,7 +85,7 @@ fn main() {
 
     let triangle = [
         VSInput {
-            pos: Vec3::new(0.0, 1.0, 0.0),
+            pos: Vec3::new(0.0, 0.866, 0.0),
             color: Vec4::new(1.0, 0.0, 0.0, 1.0),
         },
         VSInput {
@@ -176,7 +176,8 @@ fn main() {
         let now = SystemTime::now();
 
         let mut mouse_right_press = false;
-        let mut cursor_pos: (f32, f32) = (0.0, 0.0);
+        let mut mouse_middle_press = false;
+        let mut cursor_pos = Vec2::new(0.0, 0.0);
 
         base.event_loop
             .borrow_mut()
@@ -235,6 +236,29 @@ fn main() {
                         }
                     }
                     Event::WindowEvent {
+                        event:
+                            WindowEvent::MouseInput {
+                                button: MouseButton::Middle,
+                                ..
+                            },
+                        ..
+                    } => {
+                        if let Event::WindowEvent { window_id, event } = event {
+                            if let WindowEvent::MouseInput {
+                                device_id,
+                                state,
+                                button,
+                                modifiers,
+                            } = event
+                            {
+                                mouse_middle_press = match state {
+                                    ElementState::Pressed => true,
+                                    ElementState::Released => false,
+                                }
+                            }
+                        }
+                    }
+                    Event::WindowEvent {
                         event: WindowEvent::CursorMoved { .. },
                         ..
                     } => {
@@ -242,16 +266,16 @@ fn main() {
                             if let WindowEvent::CursorMoved { position, .. } = event {
                                 let x = position.x as f32;
                                 let y = position.y as f32;
-
+                                
+                                let theta_x = x - cursor_pos.x;
+                                let theta_y = y - cursor_pos.y;
+                                let forward = camera_1.at - camera_1.eye;
+                                let right = forward.cross(camera_1.up).normalize();
                                 if mouse_right_press {
-                                    let forward = camera_1.at - camera_1.eye;
-                                    let right = forward.cross(camera_1.up);
                                     let mut forward = Vec4::from((forward, 1.0));
-                                    let theta_h = (x - cursor_pos.0) * 0.005;
-                                    let theta_v = -(y - cursor_pos.1) * 0.005;
-
-                                    let rotate_horizon_mat = set_rotate(camera_1.up, theta_h * PI);
-                                    let rotate_vertical_mat = set_rotate(right, theta_v * PI);
+                                    let ratio = 0.005;
+                                    let rotate_horizon_mat = set_rotate(camera_1.up, theta_x * PI * ratio);
+                                    let rotate_vertical_mat = set_rotate(right, -theta_y * PI * ratio);
 
                                     forward = mul_vec4(rotate_horizon_mat, forward);
                                     forward = mul_vec4(rotate_vertical_mat, forward);
@@ -260,13 +284,18 @@ fn main() {
                                     camera_1.eye =
                                         camera_1.at - Vec3::new(forward.x, forward.y, forward.z);
 
-                                    camera_1.set_look_at();
-
-                                    vs_uniform.view = camera_1.mat_look_at;
-                                    test_renderer.set_vs_uniform(vs_uniform);
+                                } else if mouse_middle_press{
+                                    let up = camera_1.up.normalize();
+                                    let ratio = 0.01;
+                                    let offset = (up * theta_y + right * theta_x) * ratio;
+                                    camera_1.at -= offset;
+                                    camera_1.eye -= offset;
                                 }
+                                camera_1.set_look_at();
+                                vs_uniform.view = camera_1.mat_look_at;
+                                test_renderer.set_vs_uniform(vs_uniform);
 
-                                cursor_pos = (x, y);
+                                cursor_pos = Vec2::new(x, y);
                             }
                         }
                     }
