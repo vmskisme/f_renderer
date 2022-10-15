@@ -1,5 +1,6 @@
 use glam::{vec3, vec4, IVec2, UVec2, Vec2, Vec3, Vec4};
 use std::cmp::{max, min};
+use std::f32::consts::PI;
 use std::fs;
 use std::{collections::HashMap, task::Context};
 
@@ -47,7 +48,6 @@ pub struct Renderer<VSInput, VSUniform, PSUniform> {
     ps_uniform: PSUniform,
 }
 
-
 impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
     pub fn new(
         w: u32,
@@ -57,26 +57,33 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
         ps_uniform: PSUniform,
         ps: fn(&PSUniform, &ShaderContext) -> Vec4,
     ) -> Self {
-        Self { w: w, h: h, vertex_shader: vs, vs_uniform: vs_uniform, pixel_shader: ps, ps_uniform: ps_uniform }
+        Self {
+            w: w,
+            h: h,
+            vertex_shader: vs,
+            vs_uniform: vs_uniform,
+            pixel_shader: ps,
+            ps_uniform: ps_uniform,
+        }
     }
 
-    pub fn set_vs_uniform(&mut self, vs_uniform: VSUniform){
+    pub fn set_vs_uniform(&mut self, vs_uniform: VSUniform) {
         self.vs_uniform = vs_uniform;
     }
 
-    pub fn set_ps_uniform(&mut self, ps_uniform: PSUniform){
+    pub fn set_ps_uniform(&mut self, ps_uniform: PSUniform) {
         self.ps_uniform = ps_uniform;
     }
 
-    pub fn set_vertex_shader(&mut self, vs: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4){
+    pub fn set_vertex_shader(&mut self, vs: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4) {
         self.vertex_shader = vs;
     }
 
-    pub fn set_pixel_shader(&mut self, ps: fn(&PSUniform, &ShaderContext) -> Vec4){
+    pub fn set_pixel_shader(&mut self, ps: fn(&PSUniform, &ShaderContext) -> Vec4) {
         self.pixel_shader = ps;
     }
 
-    pub fn geometry_processing(&self, vs_inputs: &[VSInput; 3]) -> Option<Vec<[Vertex; 3]>> {
+    pub fn geometry_processing(&self, vs_inputs: &[VSInput; 3]) -> Option<Vec<Vec<Vertex>>> {
         let mut vertices = vec![];
 
         for i in 0..3 {
@@ -109,7 +116,7 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
                 Plane::Y_DOWN => vertex.pos.y >= -w,
                 Plane::Z_FAR => vertex.pos.z <= vertex.pos.w,
                 Plane::Z_NEAR => vertex.pos.z >= 0.0, // todo <= -w
-                Plane::W_PLANE => vertex.pos.w <= EPSILON, // todo 现在还有问题
+                Plane::W_PLANE => vertex.pos.w >= EPSILON,
             }
         }
 
@@ -118,11 +125,11 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
             let a_w = a.pos.w;
             let b_w = b.pos.w;
             match plane {
-                Plane::X_LEFT => (a.pos.x + a_w) / (a_w + a.pos.x - b_w - b.pos.x),
+                Plane::X_LEFT => -(a.pos.x + a_w) / (b_w + b.pos.x - a.pos.x - a_w),
                 Plane::X_RIGHT => (a_w - a.pos.x) / (a_w - b_w - a.pos.x + b.pos.x),
                 Plane::Y_UP => (a_w - a.pos.y) / (a_w - b_w - a.pos.y + b.pos.y),
-                Plane::Y_DOWN => (a.pos.y + a_w) / (a_w + a.pos.y - b_w - b.pos.y),
-                Plane::Z_FAR => (a.pos.z + a_w) / (a_w + a.pos.z - b_w - b.pos.z),
+                Plane::Y_DOWN => -(a.pos.y + a_w) / (b_w + b.pos.y - a_w - a.pos.y),
+                Plane::Z_FAR => (a_w - a.pos.z) / (a_w - b_w - a.pos.z + b.pos.z),
                 Plane::Z_NEAR => a_w / (a_w - b_w), // ...todo
                 Plane::W_PLANE => (EPSILON - a_w) / (b_w - a_w), // todo
             }
@@ -174,56 +181,87 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
 
         let mut valid_vertices = vec![];
 
-        let mut valid_vertices_index = vec![];
+        const PLANE_LIST: [Plane; 7] = [
+            Plane::X_LEFT,
+            Plane::X_RIGHT,
+            Plane::Y_UP,
+            Plane::Y_DOWN,
+            Plane::Z_NEAR,
+            Plane::Z_FAR,
+            Plane::W_PLANE, // todo
+        ];
+        let mut all_inside = true;
+        let mut inside_list = [
+            [false; PLANE_LIST.len()],
+            [false; PLANE_LIST.len()],
+            [false; PLANE_LIST.len()],
+        ];
         for i in 0..3 {
-            let mut all_inside = true;
-            let a = &vertices[i];
-            for j in (i + 1)..3 {
-                // todo 这里有冗余计算，因为外层循环一轮后inside已经对所有点完成了计算
-                let b = &vertices[j];
-
-                for plane in [
-                    Plane::X_LEFT,
-                    Plane::X_RIGHT,
-                    Plane::Y_UP,
-                    Plane::Y_DOWN,
-                    Plane::Z_NEAR,
-                    Plane::Z_FAR,
-                    // Plane::W_PLANE, // todo
-                ] {
-                    let a_inside = insides(&plane, &a);
-                    let b_inside = insides(&plane, &b);
-
-                    if a_inside != b_inside {
-                        let ratio = calculate_intersect_ratio(&plane, &a, &b);
-                        let new_vertex = vertex_intersect(&a, &b, ratio);
-                        if new_vertex.pos.w.abs() > EPSILON {
-                            valid_vertices.push(new_vertex); // 这里的点有可能还是越界的
-                        }
-                    }
-
-                    all_inside = all_inside && a_inside;
-                }
+            let v = &vertices[i];
+            let mut v_all_inside = true;
+            for (j, plane) in PLANE_LIST.iter().enumerate() {
+                let is_inside = insides(plane, &v);
+                inside_list[i][j] = is_inside;
+                all_inside &= is_inside;
+                v_all_inside &= is_inside;
             }
-
-            if all_inside {
-                valid_vertices_index.push(i);
+            if v_all_inside {
+                let vertex = &vertices[i];
+                if vertex.pos.w != 0.0 {
+                    valid_vertices.push(vertex.clone()); // todo try to remove clone
+                }
             }
         }
 
-        for v in valid_vertices_index {
-            let vertex = &vertices[v];
-            if vertex.pos.w == 0.0 {
-                continue;
+        if !all_inside {
+            for i in 0..3 {
+                let a = &vertices[i];
+                for j in (i + 1)..3 {
+                    let b = &vertices[j];
+
+                    for (plane_index, plane) in PLANE_LIST.iter().enumerate() {
+                        let a_inside = inside_list[i][plane_index];
+                        let b_inside = inside_list[j][plane_index];
+
+                        if a_inside != b_inside {
+                            let ratio = calculate_intersect_ratio(&plane, &a, &b);
+                            let new_vertex = vertex_intersect(&a, &b, ratio);
+                            if new_vertex.pos.w.abs() > EPSILON {
+                                valid_vertices.push(new_vertex); // 这里的点有可能还是越界的
+                            }
+                        }
+                    }
+                }
             }
-            valid_vertices.push(vertex.clone()); // todo try to remove clone
         }
 
         if valid_vertices.len() < 3 {
             return None;
         }
 
-        // todo 处理vertices的顺序
+        let mut centroid = Vec2::new(0.0, 0.0);
+
+        for vertex in valid_vertices.iter() {
+            centroid.x += vertex.pos.x;
+            centroid.y += vertex.pos.y;
+        }
+
+        centroid *= 1.0 / valid_vertices.len() as f32;
+
+        valid_vertices.sort_by(|a, b| {
+            let forward_a = Vec2::new(a.pos.x - centroid.x, a.pos.y - centroid.y);
+            let forward_b = Vec2::new(b.pos.x - centroid.x, b.pos.y - centroid.y);
+            let mut atan_a = forward_a.y.atan2(forward_a.x); //todo  Redundant calculations
+            let mut atan_b = forward_b.y.atan2(forward_b.x); // todo Redundant calculations
+            if atan_a < 0.0 {
+                atan_a += PI * 2.0;
+            }
+            if atan_b < 0.0 {
+                atan_b += PI * 2.0;
+            }
+
+            atan_a.total_cmp(&atan_b)
+        });
 
         let mut triangles = vec![];
 
@@ -243,12 +281,26 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
             vertex.spi.y = (vertex.spf.y + 0.5) as i32;
         }
 
-        for i in 0..valid_vertices.len() - 2 {
-            let a = valid_vertices[i].clone();
-            let b = valid_vertices[i + 1].clone();
-            let c = valid_vertices[i + 2].clone();
-            triangles.push([a, b, c]);
+        if valid_vertices.len() == 3 {
+            triangles.push(valid_vertices);
+            return Some(triangles);
         }
+
+        while valid_vertices.len() > 4 {
+            let a = valid_vertices.pop().unwrap();
+            let b = valid_vertices.last().unwrap().clone();
+            triangles.push(vec![valid_vertices[0].clone(), b, a]);
+        }
+
+        let a = valid_vertices[0].clone();
+        let b = valid_vertices[2].clone();
+        let c = valid_vertices.pop().unwrap(); // 3
+        triangles.push(vec![a, b, c]);
+
+        let c = valid_vertices.pop().unwrap(); // 2
+        let b = valid_vertices.pop().unwrap(); // 1
+        let a = valid_vertices.pop().unwrap(); // 0
+        triangles.push(vec![a, b, c]);
 
         Some(triangles)
     }
@@ -257,7 +309,7 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
         &self,
         width_range: (i32, i32),
         height_range: (i32, i32),
-        triangle: &[Vertex; 3],
+        triangle: &Vec<Vertex>,
         frame_buffer: &mut FrameBuffer,
         depth_buffer: &mut Vec<Vec<f32>>,
     ) {
@@ -406,10 +458,10 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
 #[derive(Clone)]
 pub struct Vertex {
     context: ShaderContext,
-    rhw: f32,   // w倒数
-    pos: Vec4,  // 坐标
-    spf: Vec2,  // 浮点数屏幕坐标
-    spi: IVec2, // 整数屏幕坐标
+    rhw: f32,      // w倒数
+    pub pos: Vec4, // 坐标
+    pub spf: Vec2, // 浮点数屏幕坐标
+    spi: IVec2,    // 整数屏幕坐标
 }
 
 impl Vertex {
@@ -458,11 +510,11 @@ impl FrameBuffer {
         };
     }
 
-    pub fn clear(&mut self){
+    pub fn clear(&mut self) {
         self.bits = vec![0; (self.width * self.height * 4) as usize];
     }
 
-    pub fn get_size(&self) -> u32{
+    pub fn get_size(&self) -> u32 {
         self.width * self.height * 4
     }
 
@@ -477,7 +529,8 @@ impl FrameBuffer {
     #[inline]
     pub fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
         let offset = (y * self.width * 4 + x * 4) as usize;
-        for i in 0..4 { //todo 这样存y会反过来
+        for i in 0..4 {
+            //todo 这样存y会反过来
             self.bits[offset + i] = color[i];
         }
     }

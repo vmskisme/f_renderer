@@ -65,7 +65,7 @@ fn main() {
         Vec3::new(0.0, 1.0, 0.0),
     );
 
-    let mat_proj = set_perspective(PI * 0.25, WIDTH as f32 / HEIGHT as f32, 0.1, 100.0);
+    let mat_proj = set_perspective(PI * 0.25, WIDTH as f32 / HEIGHT as f32, 0.1, 19.0);
 
     let mut vs_uniform = VSUniform {
         model: mat_model,
@@ -85,15 +85,15 @@ fn main() {
 
     let triangle = [
         VSInput {
-            pos: Vec3::new(0.0, 0.866, 0.0),
+            pos: Vec3::new(0.0, 0.433, 0.0),
             color: Vec4::new(1.0, 0.0, 0.0, 1.0),
         },
         VSInput {
-            pos: Vec3::new(1.0, -1.0, 0.0),
+            pos: Vec3::new(0.5, -0.5, 0.0),
             color: Vec4::new(0.0, 1.0, 0.0, 1.0),
         },
         VSInput {
-            pos: Vec3::new(-1.0, -1.0, 0.0),
+            pos: Vec3::new(-0.5, -0.5, 0.0),
             color: Vec4::new(0.0, 0.0, 1.0, 1.0),
         },
     ];
@@ -173,11 +173,10 @@ fn main() {
             })
             .build();
 
-        let now = SystemTime::now();
-
         let mut mouse_right_press = false;
         let mut mouse_middle_press = false;
         let mut cursor_pos = Vec2::new(0.0, 0.0);
+        let mut counter = 0;
 
         base.event_loop
             .borrow_mut()
@@ -197,7 +196,7 @@ fn main() {
                             LineDelta(x, y) => {
                                 let mut forward = (camera_1.eye - camera_1.at).normalize();
                                 let distance = camera_1.eye.distance(camera_1.at);
-                                if (2.0 < distance && y > 0.0) || (distance < 20.0 && y < 0.0){
+                                if (-1.0 < distance && y > 0.0) || (distance < 20.0 && y < 0.0){
                                     forward = forward * (distance - y * 0.2);
                                     let new_eye = forward + camera_1.at;
                                     camera_1.eye = new_eye;
@@ -316,7 +315,7 @@ fn main() {
                             .get_swapchain_images(base.swapchain)
                             .unwrap();
 
-                        frame_buffer.fill([70, 70, 70, 255]);
+                        frame_buffer.fill([30, 30, 30, 255]);
                         depth_buffer = vec![vec![0.0; WIDTH as usize]; HEIGHT as usize];
 
                         let option_vertices = test_renderer.geometry_processing(&triangle);
@@ -326,6 +325,10 @@ fn main() {
                         }
                         
                         for vertex_s in vertices {
+                            
+                            if counter == 0{
+                            }                      
+
                             test_renderer.rasterization(
                                 (0, WIDTH as i32),
                                 (0, HEIGHT as i32),
@@ -334,6 +337,10 @@ fn main() {
                                 &mut depth_buffer,
                             );
                         }
+                        if counter == 0{
+  
+                        }
+                        counter = (counter + 1) % 30;
    
                         image_slice.copy_from_slice(&frame_buffer.bits);
 
