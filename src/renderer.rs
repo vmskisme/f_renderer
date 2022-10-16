@@ -182,14 +182,14 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
 
         let mut valid_vertices = vec![];
 
-        const PLANE_LIST: [Plane; 7] = [
+        const PLANE_LIST: [Plane; 6] = [
             Plane::X_LEFT,
             Plane::X_RIGHT,
             Plane::Y_UP,
             Plane::Y_DOWN,
             Plane::Z_NEAR,
             Plane::Z_FAR,
-            Plane::W_PLANE, // todo
+            // Plane::W_PLANE, // todo
         ];
         let mut all_inside = true;
         let mut inside_list = [

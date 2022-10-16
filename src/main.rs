@@ -229,7 +229,9 @@ fn main() {
                                 if (-1.0 < distance && y > 0.0) || (distance < 20.0 && y < 0.0) {
                                     forward = forward * (distance - y * 0.2);
                                     let new_eye = forward + camera_1.at;
-                                    camera_1.eye = new_eye;
+                                    let new_at = new_eye - camera_1.eye + camera_1.at;
+                                    camera_1.eye = forward + camera_1.at;
+                                    camera_1.at = new_at;
                                     camera_1.set_look_at();
 
                                     vs_uniform.view = camera_1.mat_look_at;
@@ -399,6 +401,7 @@ fn main() {
                             }
                         }
 
+                        // let start_time = Instant::now();
                         for i in 0..vertices.len(){
                             let vertex_s = &vertices[i];
 
