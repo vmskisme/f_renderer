@@ -1,4 +1,5 @@
 use glam::{vec3, vec4, IVec2, UVec2, Vec2, Vec3, Vec4};
+use image::EncodableLayout;
 use std::cmp::{max, min};
 use std::f32::consts::PI;
 use std::fs;
@@ -508,6 +509,52 @@ impl FrameBuffer {
             height: height,
             bits: vec![0; (width * height * 4) as usize],
         };
+    }
+
+    pub fn load_file(path: &str) -> Self {
+        let image = image::open(path).unwrap();
+
+        let width = image.width() as usize;
+        let height = image.height() as usize;
+        let mut bits = vec![0 as u8; width * height * 4];
+        let color = image.as_bytes();
+
+        match image.color() {
+            image::ColorType::Rgb8 => {
+                println!("rgb {}", path);
+                for y in 0..height {
+                    for x in 0..width {
+                        let index = y * width * 4 + x * 4;
+                        let color_index = y * width * 3 + x * 3;
+                        bits[index] = color[color_index + 2];
+                        bits[index + 1] = color[color_index + 1];
+                        bits[index + 2] = color[color_index + 0];
+                        bits[index + 3] = 255;
+                    }
+                }
+            },
+            image::ColorType::Rgba8 => {
+                println!("rgba {}", path);
+                for y in 0..height {
+                    for x in 0..width {
+                        let index = y * width * 4 + x * 4;
+                        bits[index] = color[index + 2];
+                        bits[index + 1] = color[index + 1];
+                        bits[index + 2] = color[index];
+                        bits[index + 3] = color[index + 3];
+                    }
+                }
+            },
+            _ => {
+                panic!("invalid color type")
+            }
+        }
+
+        Self {
+            width: image.width(),
+            height: image.height(),
+            bits: bits,
+        }
     }
 
     pub fn clear(&mut self) {

@@ -1,17 +1,19 @@
 mod camera;
 mod input_controller;
 mod matrix_util;
+mod obj_loader;
 mod renderer;
 mod vulkan_base;
 
 use camera::Camera;
-use glam::{Mat4, Vec3, Vec4, Vec2};
-use matrix_util::{mul_vec4, set_identity, set_look_at, set_perspective, set_scale, set_rotate};
+use glam::{Mat4, Vec2, Vec3, Vec4};
+use matrix_util::{mul_vec4, set_identity, set_look_at, set_perspective, set_rotate, set_scale};
 use renderer::{u8_array_to_vec4, vec4_to_u8_array, FrameBuffer, Renderer, ShaderContext};
 
 use ash::util::*;
 use ash::vk;
 pub use ash::{Device, Instance};
+use obj_loader::Model;
 use std::default::Default;
 use std::f32::consts::PI;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -22,7 +24,6 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
-
 
 fn main() {
     const WIDTH: u32 = 1920;
@@ -35,44 +36,88 @@ fn main() {
         proj: Mat4,
     }
 
-    struct PSUniform {}
-
-    struct VSInput {
-        pos: Vec3,
-        color: Vec4,
+    #[derive(Clone, Copy)]
+    enum PLACE {
+        BODY, FACE, HAIR
     }
 
-    const COLOR: u32 = 1;
+    #[derive(Clone, Copy)]
+    struct PSUniform<'a> {
+        place: PLACE,
+        sample_2d_body: &'a FrameBuffer,
+        sample_2d_face: &'a FrameBuffer,
+        sample_2d_hair: &'a FrameBuffer,
+    }
+
+    struct VSInput {
+        pub pos: Vec3,
+        pub uv: Vec2,
+        pub normal: Vec3,
+    }
+
+    impl VSInput {
+        pub const ZERO: Self = Self {
+            pos: Vec3::ZERO,
+            uv: Vec2::ZERO,
+            normal: Vec3::ZERO,
+        };
+    }
+
+    const VARYING_UV: u32 = 0;
+    const VARYING_NORMAL: u32 = 1;
     fn vertex_shader(
         vs_uniform: &VSUniform,
         vs_input: &VSInput,
         context: &mut ShaderContext,
     ) -> Vec4 {
-        context.varying_vec4.insert(COLOR, vs_input.color);
         let mvp = vs_uniform.proj * vs_uniform.view * vs_uniform.model;
+        let model_lt = vs_uniform.model.inverse().transpose();
+        context.varying_vec2.insert(VARYING_UV, vs_input.uv);
+        let normal = mul_vec4(model_lt, Vec4::from((vs_input.normal, 1.0)));
+        context
+            .varying_vec3
+            .insert(VARYING_NORMAL, Vec3::new(normal.x, normal.y, normal.z));
         mul_vec4(mvp, Vec4::from((vs_input.pos, 1.0)))
     }
 
     fn pixel_shader(ps_uniform: &PSUniform, context: &ShaderContext) -> Vec4 {
-        context.varying_vec4[&COLOR]
+        let uv = context.varying_vec2[&VARYING_UV];
+        let n = context.varying_vec3[&VARYING_NORMAL];
+        let l = Vec3::new(1.0, 1.0, 0.85).normalize();
+        let color = match ps_uniform.place {
+            PLACE::BODY => {ps_uniform.sample_2d_body.sample_2d(uv)},
+            PLACE::FACE => {ps_uniform.sample_2d_face.sample_2d(uv)},
+            PLACE::HAIR => {ps_uniform.sample_2d_hair.sample_2d(uv)},
+        };
+        // color * (n.dot(l).clamp(0.0, 1.0) + 0.1)
+        color
     }
 
     let mat_model = set_identity();
 
     let mut camera_1 = Camera::new(
-        Vec3::new(0.0, 0.0, 3.0),
-        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 3.0),
+        Vec3::new(0.0, 1.0, 0.0),
         Vec3::new(0.0, 1.0, 0.0),
     );
 
-    let mat_proj = set_perspective(PI * 0.25, WIDTH as f32 / HEIGHT as f32, 0.1, 19.0);
+    let mat_proj = set_perspective(PI * 0.25, WIDTH as f32 / HEIGHT as f32, 0.1, 100.0);
+
+    let qiyana_body = Model::new("./obj/qiyana/qiyanabody.obj");
+    let qiyana_face = Model::new("./obj/qiyana/qiyanaface.obj");
+    let qiyana_hair = Model::new("./obj/qiyana/qiyanahair.obj");
 
     let mut vs_uniform = VSUniform {
         model: mat_model,
         view: camera_1.mat_look_at,
         proj: mat_proj,
     };
-    let ps_uniform = PSUniform {};
+    let mut ps_uniform = PSUniform {
+        place: PLACE::HAIR,
+        sample_2d_body: &qiyana_body.diffuse_map,
+        sample_2d_face: &qiyana_face.diffuse_map,
+        sample_2d_hair: &qiyana_hair.diffuse_map,
+    };
 
     let mut test_renderer: Renderer<VSInput, VSUniform, PSUniform> = Renderer::new(
         WIDTH,
@@ -82,21 +127,6 @@ fn main() {
         ps_uniform,
         pixel_shader,
     );
-
-    let triangle = [
-        VSInput {
-            pos: Vec3::new(0.0, 0.433, 0.0),
-            color: Vec4::new(1.0, 0.0, 0.0, 1.0),
-        },
-        VSInput {
-            pos: Vec3::new(0.5, -0.5, 0.0),
-            color: Vec4::new(0.0, 1.0, 0.0, 1.0),
-        },
-        VSInput {
-            pos: Vec3::new(-0.5, -0.5, 0.0),
-            color: Vec4::new(0.0, 0.0, 1.0, 1.0),
-        },
-    ];
 
     let mut frame_buffer = FrameBuffer::new(WIDTH, HEIGHT);
     let mut depth_buffer = vec![vec![0.0; WIDTH as usize]; HEIGHT as usize];
@@ -196,7 +226,7 @@ fn main() {
                             LineDelta(x, y) => {
                                 let mut forward = (camera_1.eye - camera_1.at).normalize();
                                 let distance = camera_1.eye.distance(camera_1.at);
-                                if (-1.0 < distance && y > 0.0) || (distance < 20.0 && y < 0.0){
+                                if (-1.0 < distance && y > 0.0) || (distance < 20.0 && y < 0.0) {
                                     forward = forward * (distance - y * 0.2);
                                     let new_eye = forward + camera_1.at;
                                     camera_1.eye = new_eye;
@@ -206,9 +236,7 @@ fn main() {
                                     test_renderer.set_vs_uniform(vs_uniform);
                                 }
                             }
-                            PixelDelta(p) => {
-
-                            }
+                            PixelDelta(p) => {}
                         }
                     }
                     Event::WindowEvent {
@@ -265,7 +293,7 @@ fn main() {
                             if let WindowEvent::CursorMoved { position, .. } = event {
                                 let x = position.x as f32;
                                 let y = position.y as f32;
-                                
+
                                 let theta_x = x - cursor_pos.x;
                                 let theta_y = y - cursor_pos.y;
                                 let forward = camera_1.at - camera_1.eye;
@@ -273,8 +301,10 @@ fn main() {
                                 if mouse_right_press {
                                     let mut forward = Vec4::from((forward, 1.0));
                                     let ratio = 0.005;
-                                    let rotate_horizon_mat = set_rotate(camera_1.up, theta_x * PI * ratio);
-                                    let rotate_vertical_mat = set_rotate(right, -theta_y * PI * ratio);
+                                    let rotate_horizon_mat =
+                                        set_rotate(camera_1.up, theta_x * PI * ratio);
+                                    let rotate_vertical_mat =
+                                        set_rotate(right, -theta_y * PI * ratio);
 
                                     forward = mul_vec4(rotate_horizon_mat, forward);
                                     forward = mul_vec4(rotate_vertical_mat, forward);
@@ -282,8 +312,7 @@ fn main() {
                                     camera_1.up = right.cross(new_forward).normalize();
                                     camera_1.eye =
                                         camera_1.at - Vec3::new(forward.x, forward.y, forward.z);
-
-                                } else if mouse_middle_press{
+                                } else if mouse_middle_press {
                                     let up = camera_1.up.normalize();
                                     let ratio = 0.01;
                                     let offset = (up * theta_y + right * theta_x) * ratio;
@@ -318,30 +347,86 @@ fn main() {
                         frame_buffer.fill([30, 30, 30, 255]);
                         depth_buffer = vec![vec![0.0; WIDTH as usize]; HEIGHT as usize];
 
-                        let option_vertices = test_renderer.geometry_processing(&triangle);
                         let mut vertices = vec![];
-                        if option_vertices.is_some() {
-                            vertices = option_vertices.unwrap();
+                        let body_offset = 0;
+                        for i in 0..qiyana_body.faces_len() {
+                            let mut inputs = [VSInput::ZERO, VSInput::ZERO, VSInput::ZERO];
+                            for j in 0..3 {
+                                inputs[j] = VSInput {
+                                    pos: qiyana_body.vert(i, j),
+                                    uv: qiyana_body.uv(i, j),
+                                    normal: qiyana_body.normal(i, j),
+                                };
+                            }
+                            let option_vertices = test_renderer.geometry_processing(&inputs);
+
+                            if option_vertices.is_some() {
+                                vertices.extend(option_vertices.unwrap());
+                            }
                         }
                         
-                        for vertex_s in vertices {
-                            
-                            if counter == 0{
-                            }                      
+                        let face_offset = vertices.len();
+                        for i in 0..qiyana_face.faces_len() {
+                            let mut inputs = [VSInput::ZERO, VSInput::ZERO, VSInput::ZERO];
+                            for j in 0..3 {
+                                inputs[j] = VSInput {
+                                    pos: qiyana_face.vert(i, j),
+                                    uv: qiyana_face.uv(i, j),
+                                    normal: qiyana_face.normal(i, j),
+                                };
+                            }
+                            let option_vertices = test_renderer.geometry_processing(&inputs);
+
+                            if option_vertices.is_some() {
+                                vertices.extend(option_vertices.unwrap());
+                            }
+                        }
+                        
+                        let hair_offset = vertices.len();
+                        for i in 0..qiyana_hair.faces_len() {
+                            let mut inputs = [VSInput::ZERO, VSInput::ZERO, VSInput::ZERO];
+                            for j in 0..3 {
+                                inputs[j] = VSInput {
+                                    pos: qiyana_hair.vert(i, j),
+                                    uv: qiyana_hair.uv(i, j),
+                                    normal: qiyana_hair.normal(i, j),
+                                };
+                            }
+                            let option_vertices = test_renderer.geometry_processing(&inputs);
+
+                            if option_vertices.is_some() {
+                                vertices.extend(option_vertices.unwrap());
+                            }
+                        }
+
+                        for i in 0..vertices.len(){
+                            let vertex_s = &vertices[i];
+
+                            if i == body_offset{
+                                ps_uniform.place = PLACE::BODY;
+                                test_renderer.set_ps_uniform(ps_uniform);
+                            }else if i == face_offset{
+                                ps_uniform.place = PLACE::FACE;
+                                test_renderer.set_ps_uniform(ps_uniform);
+                            }else if i == hair_offset{
+                                ps_uniform.place = PLACE::HAIR;
+                                test_renderer.set_ps_uniform(ps_uniform);
+                            }
+
+                            if counter == 0 {}
 
                             test_renderer.rasterization(
                                 (0, WIDTH as i32),
                                 (0, HEIGHT as i32),
-                                &vertex_s,
+                                vertex_s,
                                 &mut frame_buffer,
                                 &mut depth_buffer,
                             );
                         }
-                        if counter == 0{
-  
-                        }
+
+                        if counter == 0 {}
                         counter = (counter + 1) % 30;
-   
+
                         image_slice.copy_from_slice(&frame_buffer.bits);
 
                         let swap_chain_image = present_images[present_index as usize];
