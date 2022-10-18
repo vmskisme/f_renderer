@@ -1,9 +1,7 @@
 use glam::{vec3, vec4, IVec2, UVec2, Vec2, Vec3, Vec4};
-use image::EncodableLayout;
 use std::cmp::{max, min};
 use std::f32::consts::PI;
-use std::fs;
-use std::{collections::HashMap, task::Context};
+
 
 #[inline]
 pub fn vec4_to_u8_array(v: Vec4) -> [u8; 4] {
@@ -40,23 +38,34 @@ fn is_top_left(a: IVec2, b: IVec2) -> bool {
     ((a.y == b.y) && (a.x < b.x)) || (a.y > b.y)
 }
 
-pub struct Renderer<VSInput, VSUniform, PSUniform> {
-    w: u32,
-    h: u32,
-    vertex_shader: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4,
-    vs_uniform: VSUniform,
-    pixel_shader: fn(&PSUniform, &ShaderContext) -> Vec4,
-    ps_uniform: PSUniform,
+enum Plane {
+    X_LEFT,
+    X_RIGHT,
+    Y_UP,
+    Y_DOWN,
+    Z_NEAR,
+    Z_FAR,
+    W_PLANE,
 }
 
-impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
+pub struct Renderer<T, E, U, V> {
+    w: u32,
+    h: u32,
+    vertex_shader: fn(&E, &T, &mut V) -> Vec4,
+    vs_uniform: E,
+    pixel_shader: fn(&U, &V) -> Vec4,
+    ps_uniform: U,
+}
+
+impl<T, E, U, V> Renderer<T, E, U, V>
+where V: ShaderContext + Clone + Copy {
     pub fn new(
         w: u32,
         h: u32,
-        vs_uniform: VSUniform,
-        vs: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4,
-        ps_uniform: PSUniform,
-        ps: fn(&PSUniform, &ShaderContext) -> Vec4,
+        vs_uniform: E,
+        vs: fn(&E, &T, &mut V) -> Vec4,
+        ps_uniform: U,
+        ps: fn(&U, &V) -> Vec4,
     ) -> Self {
         Self {
             w: w,
@@ -68,23 +77,64 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
         }
     }
 
-    pub fn set_vs_uniform(&mut self, vs_uniform: VSUniform) {
+    const EPSILON: f32 = 1.0e-5;
+
+    pub fn set_vs_uniform(&mut self, vs_uniform: E) {
         self.vs_uniform = vs_uniform;
     }
 
-    pub fn set_ps_uniform(&mut self, ps_uniform: PSUniform) {
+    pub fn set_ps_uniform(&mut self, ps_uniform: U) {
         self.ps_uniform = ps_uniform;
     }
 
-    pub fn set_vertex_shader(&mut self, vs: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4) {
+    pub fn set_vertex_shader(&mut self, vs: fn(&E, &T, &mut V) -> Vec4) {
         self.vertex_shader = vs;
     }
 
-    pub fn set_pixel_shader(&mut self, ps: fn(&PSUniform, &ShaderContext) -> Vec4) {
+    pub fn set_pixel_shader(&mut self, ps: fn(&U, &V) -> Vec4) {
         self.pixel_shader = ps;
     }
 
-    pub fn geometry_processing(&self, vs_inputs: &[VSInput; 3]) -> Option<Vec<Vec<Vertex>>> {
+    #[inline]
+    fn insides(plane: &Plane, vertex: &Vertex<V>) -> bool {
+        let w = vertex.pos.w;
+        match plane {
+            Plane::X_LEFT => vertex.pos.x >= -w,
+            Plane::X_RIGHT => vertex.pos.x <= w,
+            Plane::Y_UP => vertex.pos.y <= w,
+            Plane::Y_DOWN => vertex.pos.y >= -w,
+            Plane::Z_FAR => vertex.pos.z <= vertex.pos.w,
+            Plane::Z_NEAR => vertex.pos.z >= 0.0, // todo <= -w
+            Plane::W_PLANE => vertex.pos.w >= Self::EPSILON,
+        }
+    }
+
+    #[inline]
+    fn calculate_intersect_ratio(plane: &Plane, a: &Vertex<V>, b: &Vertex<V>) -> f32 {
+        let a_w = a.pos.w;
+        let b_w = b.pos.w;
+        match plane {
+            Plane::X_LEFT => -(a.pos.x + a_w) / (b_w + b.pos.x - a.pos.x - a_w),
+            Plane::X_RIGHT => (a_w - a.pos.x) / (a_w - b_w - a.pos.x + b.pos.x),
+            Plane::Y_UP => (a_w - a.pos.y) / (a_w - b_w - a.pos.y + b.pos.y),
+            Plane::Y_DOWN => -(a.pos.y + a_w) / (b_w + b.pos.y - a_w - a.pos.y),
+            Plane::Z_FAR => (a_w - a.pos.z) / (a_w - b_w - a.pos.z + b.pos.z),
+            Plane::Z_NEAR => a_w / (a_w - b_w), // ...todo
+            Plane::W_PLANE => (Self::EPSILON - a_w) / (b_w - a_w), // todo
+        }
+    }
+
+    #[inline]
+    fn vertex_intersect(a: &Vertex<V>, b: &Vertex<V>, ratio: f32) -> Vertex<V> {
+        let mut new_vertex = Vertex::new();
+        new_vertex.pos = a.pos + ratio * (b.pos - a.pos);
+
+        new_vertex.context = a.context.add((b.context.sub(a.context)).mul(ratio));
+
+        new_vertex
+    }
+
+    pub fn geometry_processing(&self, vs_inputs: &[T; 3]) -> Option<Vec<Vec<Vertex<V>>>> {
         let mut vertices = vec![];
 
         for i in 0..3 {
@@ -93,91 +143,6 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
             vertex.pos = (self.vertex_shader)(&self.vs_uniform, &vs_inputs[i], &mut vertex.context);
 
             vertices.push(vertex);
-        }
-
-        enum Plane {
-            X_LEFT,
-            X_RIGHT,
-            Y_UP,
-            Y_DOWN,
-            Z_NEAR,
-            Z_FAR,
-            W_PLANE,
-        }
-
-        const EPSILON: f32 = 1.0e-5;
-
-        #[inline]
-        fn insides(plane: &Plane, vertex: &Vertex) -> bool {
-            let w = vertex.pos.w;
-            match plane {
-                Plane::X_LEFT => vertex.pos.x >= -w,
-                Plane::X_RIGHT => vertex.pos.x <= w,
-                Plane::Y_UP => vertex.pos.y <= w,
-                Plane::Y_DOWN => vertex.pos.y >= -w,
-                Plane::Z_FAR => vertex.pos.z <= vertex.pos.w,
-                Plane::Z_NEAR => vertex.pos.z >= 0.0, // todo <= -w
-                Plane::W_PLANE => vertex.pos.w >= EPSILON,
-            }
-        }
-
-        #[inline]
-        fn calculate_intersect_ratio(plane: &Plane, a: &Vertex, b: &Vertex) -> f32 {
-            let a_w = a.pos.w;
-            let b_w = b.pos.w;
-            match plane {
-                Plane::X_LEFT => -(a.pos.x + a_w) / (b_w + b.pos.x - a.pos.x - a_w),
-                Plane::X_RIGHT => (a_w - a.pos.x) / (a_w - b_w - a.pos.x + b.pos.x),
-                Plane::Y_UP => (a_w - a.pos.y) / (a_w - b_w - a.pos.y + b.pos.y),
-                Plane::Y_DOWN => -(a.pos.y + a_w) / (b_w + b.pos.y - a_w - a.pos.y),
-                Plane::Z_FAR => (a_w - a.pos.z) / (a_w - b_w - a.pos.z + b.pos.z),
-                Plane::Z_NEAR => a_w / (a_w - b_w), // ...todo
-                Plane::W_PLANE => (EPSILON - a_w) / (b_w - a_w), // todo
-            }
-        }
-
-        #[inline]
-        fn vertex_intersect(a: &Vertex, b: &Vertex, ratio: f32) -> Vertex {
-            let mut new_vertex = Vertex::new();
-            new_vertex.pos = a.pos + ratio * (b.pos - a.pos);
-
-            for item in a.context.varying_float.iter() {
-                let a_vary = item.1;
-                let b_vary = b.context.varying_float[item.0];
-                new_vertex
-                    .context
-                    .varying_float
-                    .insert(*item.0, a_vary + ratio * (b_vary - a_vary));
-            }
-
-            for item in a.context.varying_vec2.iter() {
-                let a_c = *item.1;
-                let b_c = b.context.varying_vec2[item.0];
-                new_vertex
-                    .context
-                    .varying_vec2
-                    .insert(*item.0, a_c + ratio * (b_c - a_c));
-            }
-
-            for item in a.context.varying_vec3.iter() {
-                let a_c = *item.1;
-                let b_c = b.context.varying_vec3[item.0];
-                new_vertex
-                    .context
-                    .varying_vec3
-                    .insert(*item.0, a_c + ratio * (b_c - a_c));
-            }
-
-            for item in a.context.varying_vec4.iter() {
-                let a_c = *item.1;
-                let b_c = b.context.varying_vec4[item.0];
-                new_vertex
-                    .context
-                    .varying_vec4
-                    .insert(*item.0, a_c + ratio * (b_c - a_c));
-            }
-
-            new_vertex
         }
 
         let mut valid_vertices = vec![];
@@ -198,18 +163,18 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
             [false; PLANE_LIST.len()],
         ];
         for i in 0..3 {
-            let v = &vertices[i];
+            let v = vertices[i];
             let mut v_all_inside = true;
             for (j, plane) in PLANE_LIST.iter().enumerate() {
-                let is_inside = insides(plane, &v);
+                let is_inside = Self::insides(plane, &v);
                 inside_list[i][j] = is_inside;
                 all_inside &= is_inside;
                 v_all_inside &= is_inside;
             }
             if v_all_inside {
-                let vertex = &vertices[i];
+                let vertex = vertices[i];
                 if vertex.pos.w != 0.0 {
-                    valid_vertices.push(vertex.clone()); // todo try to remove clone
+                    valid_vertices.push(vertex); // todo try to remove clone
                 }
             }
         }
@@ -225,9 +190,9 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
                         let b_inside = inside_list[j][plane_index];
 
                         if a_inside != b_inside {
-                            let ratio = calculate_intersect_ratio(&plane, &a, &b);
-                            let new_vertex = vertex_intersect(&a, &b, ratio);
-                            if new_vertex.pos.w.abs() > EPSILON {
+                            let ratio = Self::calculate_intersect_ratio(&plane, &a, &b);
+                            let new_vertex = Self::vertex_intersect(&a, &b, ratio);
+                            if new_vertex.pos.w.abs() > Self::EPSILON {
                                 valid_vertices.push(new_vertex); // 这里的点有可能还是越界的
                             }
                         }
@@ -287,20 +252,22 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
             return Some(triangles);
         }
 
-        while valid_vertices.len() > 4 {
-            let a = valid_vertices.pop().unwrap();
-            let b = valid_vertices.last().unwrap().clone();
-            triangles.push(vec![valid_vertices[0].clone(), b, a]);
+        let mut last_vertex_index = valid_vertices.len() - 1;
+        while last_vertex_index > 3 {
+            let a = valid_vertices[last_vertex_index];
+            let b = valid_vertices[last_vertex_index - 1];
+            triangles.push(vec![valid_vertices[0], b, a]);
+            last_vertex_index -= 1;
         }
 
-        let a = valid_vertices[0].clone();
-        let b = valid_vertices[2].clone();
-        let c = valid_vertices.pop().unwrap(); // 3
+        let a = valid_vertices[0];
+        let b = valid_vertices[2];
+        let c = valid_vertices[3];
         triangles.push(vec![a, b, c]);
 
-        let c = valid_vertices.pop().unwrap(); // 2
-        let b = valid_vertices.pop().unwrap(); // 1
-        let a = valid_vertices.pop().unwrap(); // 0
+        let c = valid_vertices[2];
+        let b = valid_vertices[1];
+        let a = valid_vertices[0];
         triangles.push(vec![a, b, c]);
 
         Some(triangles)
@@ -310,7 +277,7 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
         &self,
         width_range: (i32, i32),
         height_range: (i32, i32),
-        triangle: &Vec<Vertex>,
+        triangle: &Vec<Vertex<V>>,
         frame_buffer: &mut FrameBuffer,
         depth_buffer: &mut Vec<Vec<f32>>,
     ) {
@@ -407,47 +374,11 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
                 let c1 = vtx[1].rhw * b * w;
                 let c2 = vtx[2].rhw * c * w;
 
-                let mut input = ShaderContext::new();
-
                 let i0 = &vtx[0].context;
                 let i1 = &vtx[1].context;
                 let i2 = &vtx[2].context;
 
-                for item in i0.varying_float.iter() {
-                    let f0 = i0.varying_float[item.0];
-                    let f1 = i1.varying_float[item.0];
-                    let f2 = i2.varying_float[item.0];
-                    input
-                        .varying_float
-                        .insert(*item.0, c0 * f0 + c1 * f1 + c2 * f2);
-                }
-
-                for item in i0.varying_vec2.iter() {
-                    let f0 = i0.varying_vec2[item.0];
-                    let f1 = i1.varying_vec2[item.0];
-                    let f2 = i2.varying_vec2[item.0];
-                    input
-                        .varying_vec2
-                        .insert(*item.0, c0 * f0 + c1 * f1 + c2 * f2);
-                }
-
-                for item in i0.varying_vec3.iter() {
-                    let f0 = i0.varying_vec3[item.0];
-                    let f1 = i1.varying_vec3[item.0];
-                    let f2 = i2.varying_vec3[item.0];
-                    input
-                        .varying_vec3
-                        .insert(*item.0, c0 * f0 + c1 * f1 + c2 * f2);
-                }
-
-                for item in i0.varying_vec4.iter() {
-                    let f0 = i0.varying_vec4[item.0];
-                    let f1 = i1.varying_vec4[item.0];
-                    let f2 = i2.varying_vec4[item.0];
-                    input
-                        .varying_vec4
-                        .insert(*item.0, c0 * f0 + c1 * f1 + c2 * f2);
-                }
+                let input = i0.mul(c0).add(i1.mul(c1)).add(i2.mul(c2));
 
                 let color = (self.pixel_shader)(&self.ps_uniform, &input);
                 frame_buffer.set_pixel(index_x as u32, index_y as u32, vec4_to_u8_array(color));
@@ -456,19 +387,21 @@ impl<VSInput, VSUniform, PSUniform> Renderer<VSInput, VSUniform, PSUniform> {
     }
 }
 
-#[derive(Clone)]
-pub struct Vertex {
-    context: ShaderContext,
+#[derive(Clone, Copy)]
+pub struct Vertex<T>
+where T: ShaderContext {
+    context: T,
     rhw: f32,      // w倒数
     pub pos: Vec4, // 坐标
     pub spf: Vec2, // 浮点数屏幕坐标
     spi: IVec2,    // 整数屏幕坐标
 }
 
-impl Vertex {
+impl<T> Vertex<T> 
+where T: ShaderContext{
     pub fn new() -> Self {
         Self {
-            context: ShaderContext::new(),
+            context: T::new(),
             rhw: 0.0,
             pos: Vec4::ZERO,
             spf: Vec2::ZERO,
@@ -477,23 +410,15 @@ impl Vertex {
     }
 }
 
-#[derive(Clone)]
-pub struct ShaderContext {
-    pub varying_float: HashMap<u32, f32>, // 浮点数 varying 列表
-    pub varying_vec2: HashMap<u32, Vec2>, // 二维矢量 varying 列表
-    pub varying_vec3: HashMap<u32, Vec3>, // 三维矢量 varying 列表
-    pub varying_vec4: HashMap<u32, Vec4>, // 四维矢量 varying 列表
-}
 
-impl ShaderContext {
-    fn new() -> ShaderContext {
-        ShaderContext {
-            varying_float: HashMap::new(),
-            varying_vec2: HashMap::new(),
-            varying_vec3: HashMap::new(),
-            varying_vec4: HashMap::new(),
-        }
-    }
+pub trait ShaderContext{
+    fn new() -> Self;
+
+    fn mul(self, rhs: f32) -> Self;
+
+    fn add(self, rhs: Self) -> Self;
+
+    fn sub(self, rhs: Self) -> Self;
 }
 
 pub struct FrameBuffer {

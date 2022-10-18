@@ -26,8 +26,8 @@ use winit::{
 };
 
 fn main() {
-    const WIDTH: u32 = 1920;
-    const HEIGHT: u32 = 1080;
+    const WIDTH: u32 = 960;
+    const HEIGHT: u32 = 540;
 
     #[derive(Clone, Copy)]
     struct VSUniform {
@@ -63,26 +63,46 @@ fn main() {
         };
     }
 
-    const VARYING_UV: u32 = 0;
-    const VARYING_NORMAL: u32 = 1;
+    #[derive(Clone, Copy)]
+    struct MyShaderContext{
+        uv: Vec2,
+        normal: Vec3
+    }
+
+    impl ShaderContext for MyShaderContext {
+        fn new() -> Self {
+            Self { uv: Vec2::ZERO, normal: Vec3::ZERO }
+        }
+
+        fn add(self, rhs: Self) -> Self {
+            Self { uv: self.uv + rhs.uv, normal: self.normal + rhs.normal }
+        }
+
+        fn mul(self, rhs: f32) -> Self {
+            Self { uv: self.uv * rhs, normal: self.normal * rhs }
+        }
+
+        fn sub(self, rhs: Self) -> Self {
+            Self { uv: self.uv - rhs.uv, normal: self.normal - rhs.normal }
+        }
+    }
+
     fn vertex_shader(
         vs_uniform: &VSUniform,
         vs_input: &VSInput,
-        context: &mut ShaderContext,
+        context: &mut MyShaderContext,
     ) -> Vec4 {
         let mvp = vs_uniform.proj * vs_uniform.view * vs_uniform.model;
         let model_lt = vs_uniform.model.inverse().transpose();
-        context.varying_vec2.insert(VARYING_UV, vs_input.uv);
+        context.uv = vs_input.uv;
         let normal = mul_vec4(model_lt, Vec4::from((vs_input.normal, 1.0)));
-        context
-            .varying_vec3
-            .insert(VARYING_NORMAL, Vec3::new(normal.x, normal.y, normal.z));
+        context.normal = Vec3::new(normal.x, normal.y, normal.z);
         mul_vec4(mvp, Vec4::from((vs_input.pos, 1.0)))
     }
 
-    fn pixel_shader(ps_uniform: &PSUniform, context: &ShaderContext) -> Vec4 {
-        let uv = context.varying_vec2[&VARYING_UV];
-        let n = context.varying_vec3[&VARYING_NORMAL];
+    fn pixel_shader(ps_uniform: &PSUniform, context: &MyShaderContext) -> Vec4 {
+        let uv = context.uv;
+        let n = context.normal;
         let l = Vec3::new(1.0, 1.0, 0.85).normalize();
         let color = match ps_uniform.place {
             PLACE::BODY => {ps_uniform.sample_2d_body.sample_2d(uv)},
@@ -119,7 +139,7 @@ fn main() {
         sample_2d_hair: &qiyana_hair.diffuse_map,
     };
 
-    let mut test_renderer: Renderer<VSInput, VSUniform, PSUniform> = Renderer::new(
+    let mut test_renderer: Renderer<VSInput, VSUniform, PSUniform, MyShaderContext> = Renderer::new(
         WIDTH,
         HEIGHT,
         vs_uniform,
