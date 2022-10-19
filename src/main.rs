@@ -8,7 +8,7 @@ mod vulkan_base;
 use camera::Camera;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use matrix_util::{mul_vec4, set_identity, set_look_at, set_perspective, set_rotate, set_scale};
-use renderer::{u8_array_to_vec4, vec4_to_u8_array, FrameBuffer, Renderer, ShaderContext};
+use renderer::{u8_array_to_vec4, vec4_to_u8_array, FrameBuffer, Renderer, Interpolable};
 
 use ash::util::*;
 use ash::vk;
@@ -49,6 +49,7 @@ fn main() {
         sample_2d_hair: &'a FrameBuffer,
     }
 
+    #[derive(Clone, Copy)]
     struct VSInput {
         pub pos: Vec3,
         pub uv: Vec2,
@@ -64,12 +65,12 @@ fn main() {
     }
 
     #[derive(Clone, Copy)]
-    struct MyShaderContext{
+    struct ShaderContext{
         uv: Vec2,
         normal: Vec3
     }
 
-    impl ShaderContext for MyShaderContext {
+    impl Interpolable for ShaderContext {
         fn new() -> Self {
             Self { uv: Vec2::ZERO, normal: Vec3::ZERO }
         }
@@ -90,7 +91,7 @@ fn main() {
     fn vertex_shader(
         vs_uniform: &VSUniform,
         vs_input: &VSInput,
-        context: &mut MyShaderContext,
+        context: &mut ShaderContext,
     ) -> Vec4 {
         let mvp = vs_uniform.proj * vs_uniform.view * vs_uniform.model;
         let model_lt = vs_uniform.model.inverse().transpose();
@@ -100,7 +101,7 @@ fn main() {
         mul_vec4(mvp, Vec4::from((vs_input.pos, 1.0)))
     }
 
-    fn pixel_shader(ps_uniform: &PSUniform, context: &MyShaderContext) -> Vec4 {
+    fn pixel_shader(ps_uniform: &PSUniform, context: &ShaderContext) -> Vec4 {
         let uv = context.uv;
         let n = context.normal;
         let l = Vec3::new(1.0, 1.0, 0.85).normalize();
@@ -139,7 +140,7 @@ fn main() {
         sample_2d_hair: &qiyana_hair.diffuse_map,
     };
 
-    let mut test_renderer: Renderer<VSInput, VSUniform, PSUniform, MyShaderContext> = Renderer::new(
+    let mut test_renderer: Renderer<VSInput, VSUniform, PSUniform, ShaderContext> = Renderer::new(
         WIDTH,
         HEIGHT,
         vs_uniform,

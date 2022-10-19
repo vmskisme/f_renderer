@@ -24,16 +24,6 @@ pub fn u8_array_to_vec4(v: [u8; 4]) -> Vec4 {
 }
 
 #[inline]
-pub fn u8_array_mul_f32(v: [u8; 4], a: f32) -> [u8; 4] {
-    [
-        ((v[0] as f32) * a) as u8,
-        ((v[1] as f32) * a) as u8,
-        ((v[2] as f32) * a) as u8,
-        ((v[3] as f32) * a) as u8,
-    ]
-}
-
-#[inline]
 fn is_top_left(a: IVec2, b: IVec2) -> bool {
     ((a.y == b.y) && (a.x < b.x)) || (a.y > b.y)
 }
@@ -48,24 +38,24 @@ enum Plane {
     W_PLANE,
 }
 
-pub struct Renderer<T, E, U, V> {
+pub struct Renderer<VSInput, VSUniform, PSUniform, ShaderContext> {
     w: u32,
     h: u32,
-    vertex_shader: fn(&E, &T, &mut V) -> Vec4,
-    vs_uniform: E,
-    pixel_shader: fn(&U, &V) -> Vec4,
-    ps_uniform: U,
+    vertex_shader: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4,
+    vs_uniform: VSUniform,
+    pixel_shader: fn(&PSUniform, &ShaderContext) -> Vec4,
+    ps_uniform: PSUniform,
 }
 
-impl<T, E, U, V> Renderer<T, E, U, V>
-where V: ShaderContext + Clone + Copy {
+impl<VSInput, VSUniform, PSUniform, ShaderContext> Renderer<VSInput, VSUniform, PSUniform, ShaderContext>
+where ShaderContext: Interpolable + Clone + Copy {
     pub fn new(
         w: u32,
         h: u32,
-        vs_uniform: E,
-        vs: fn(&E, &T, &mut V) -> Vec4,
-        ps_uniform: U,
-        ps: fn(&U, &V) -> Vec4,
+        vs_uniform: VSUniform,
+        vs: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4,
+        ps_uniform: PSUniform,
+        ps: fn(&PSUniform, &ShaderContext) -> Vec4,
     ) -> Self {
         Self {
             w: w,
@@ -79,24 +69,24 @@ where V: ShaderContext + Clone + Copy {
 
     const EPSILON: f32 = 1.0e-5;
 
-    pub fn set_vs_uniform(&mut self, vs_uniform: E) {
+    pub fn set_vs_uniform(&mut self, vs_uniform: VSUniform) {
         self.vs_uniform = vs_uniform;
     }
 
-    pub fn set_ps_uniform(&mut self, ps_uniform: U) {
+    pub fn set_ps_uniform(&mut self, ps_uniform: PSUniform) {
         self.ps_uniform = ps_uniform;
     }
 
-    pub fn set_vertex_shader(&mut self, vs: fn(&E, &T, &mut V) -> Vec4) {
+    pub fn set_vertex_shader(&mut self, vs: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4) {
         self.vertex_shader = vs;
     }
 
-    pub fn set_pixel_shader(&mut self, ps: fn(&U, &V) -> Vec4) {
+    pub fn set_pixel_shader(&mut self, ps: fn(&PSUniform, &ShaderContext) -> Vec4) {
         self.pixel_shader = ps;
     }
 
     #[inline]
-    fn insides(plane: &Plane, vertex: &Vertex<V>) -> bool {
+    fn insides(plane: &Plane, vertex: &Vertex<ShaderContext>) -> bool {
         let w = vertex.pos.w;
         match plane {
             Plane::X_LEFT => vertex.pos.x >= -w,
@@ -110,7 +100,7 @@ where V: ShaderContext + Clone + Copy {
     }
 
     #[inline]
-    fn calculate_intersect_ratio(plane: &Plane, a: &Vertex<V>, b: &Vertex<V>) -> f32 {
+    fn calculate_intersect_ratio(plane: &Plane, a: &Vertex<ShaderContext>, b: &Vertex<ShaderContext>) -> f32 {
         let a_w = a.pos.w;
         let b_w = b.pos.w;
         match plane {
@@ -125,7 +115,7 @@ where V: ShaderContext + Clone + Copy {
     }
 
     #[inline]
-    fn vertex_intersect(a: &Vertex<V>, b: &Vertex<V>, ratio: f32) -> Vertex<V> {
+    fn vertex_intersect(a: &Vertex<ShaderContext>, b: &Vertex<ShaderContext>, ratio: f32) -> Vertex<ShaderContext> {
         let mut new_vertex = Vertex::new();
         new_vertex.pos = a.pos + ratio * (b.pos - a.pos);
 
@@ -134,7 +124,7 @@ where V: ShaderContext + Clone + Copy {
         new_vertex
     }
 
-    pub fn geometry_processing(&self, vs_inputs: &[T; 3]) -> Option<Vec<Vec<Vertex<V>>>> {
+    pub fn geometry_processing(&self, vs_inputs: &[VSInput; 3]) -> Option<Vec<Vec<Vertex<ShaderContext>>>> {
         let mut vertices = vec![];
 
         for i in 0..3 {
@@ -277,7 +267,7 @@ where V: ShaderContext + Clone + Copy {
         &self,
         width_range: (i32, i32),
         height_range: (i32, i32),
-        triangle: &Vec<Vertex<V>>,
+        triangle: &Vec<Vertex<ShaderContext>>,
         frame_buffer: &mut FrameBuffer,
         depth_buffer: &mut Vec<Vec<f32>>,
     ) {
@@ -389,7 +379,7 @@ where V: ShaderContext + Clone + Copy {
 
 #[derive(Clone, Copy)]
 pub struct Vertex<T>
-where T: ShaderContext {
+where T: Interpolable {
     context: T,
     rhw: f32,      // w倒数
     pub pos: Vec4, // 坐标
@@ -398,7 +388,7 @@ where T: ShaderContext {
 }
 
 impl<T> Vertex<T> 
-where T: ShaderContext{
+where T: Interpolable{
     pub fn new() -> Self {
         Self {
             context: T::new(),
@@ -411,7 +401,7 @@ where T: ShaderContext{
 }
 
 
-pub trait ShaderContext{
+pub trait Interpolable{
     fn new() -> Self;
 
     fn mul(self, rhs: f32) -> Self;
