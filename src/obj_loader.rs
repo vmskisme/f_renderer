@@ -10,8 +10,6 @@ pub struct Model {
     norms: Vec<Vec3>,
     uv: Vec<Vec2>,
     pub diffuse_map: FrameBuffer,
-    // normal_map: FrameBuffer,
-    // specular_map: FrameBuffer,
 }
 
 impl Model {
@@ -24,12 +22,6 @@ impl Model {
             diffuse_map: FrameBuffer::load_file(
                 (path.strip_suffix(".obj").unwrap().to_string() + "_diffuse.tga").as_str(),
             ),
-            // normal_map: FrameBuffer::load_file(
-            //     (path.strip_suffix(".obj").unwrap().to_string() + "_nm.bmp").as_str(),
-            // ),
-            // specular_map: FrameBuffer::load_file(
-            //     (path.strip_suffix(".obj").unwrap().to_string() + "_spec.bmp").as_str(),
-            // ),
         };
         
 

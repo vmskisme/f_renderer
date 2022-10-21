@@ -35,16 +35,6 @@ pub fn set_perspective(fovy: f32, aspect: f32, zn: f32, zf: f32) -> Mat4 {
 }
 
 #[inline]
-pub fn mul_vec4(mat: Mat4, vec: Vec4) -> Vec4 {
-    vec4(
-        vec.dot(mat.row(0)),
-        vec.dot(mat.row(1)),
-        vec.dot(mat.row(2)),
-        vec.dot(mat.row(3)),
-    )
-}
-
-#[inline]
 pub fn set_rotate(axis: Vec3, theta: f32) -> Mat4 {
     let (x,y,z) = (axis.x,axis.y,axis.z);
     let q_sin = (theta * 0.5).sin();

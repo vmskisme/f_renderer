@@ -388,7 +388,7 @@ where T: Interpolable {
 }
 
 impl<T> Vertex<T> 
-where T: Interpolable{
+where T: Interpolable + Copy + Clone{
     pub fn new() -> Self {
         Self {
             context: T::new(),

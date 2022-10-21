@@ -7,8 +7,8 @@ mod vulkan_base;
 
 use camera::Camera;
 use glam::{Mat4, Vec2, Vec3, Vec4};
-use matrix_util::{mul_vec4, set_identity, set_look_at, set_perspective, set_rotate, set_scale};
-use renderer::{u8_array_to_vec4, vec4_to_u8_array, FrameBuffer, Renderer, Interpolable};
+use matrix_util::{set_identity, set_perspective, set_rotate};
+use renderer::{FrameBuffer, Interpolable, Renderer};
 
 use ash::util::*;
 use ash::vk;
@@ -16,7 +16,7 @@ pub use ash::{Device, Instance};
 use obj_loader::Model;
 use std::default::Default;
 use std::f32::consts::PI;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant};
 use vulkan_base::{find_memorytype_index, record_submit_commandbuffer, VulkanBase};
 use winit::platform::run_return::EventLoopExtRunReturn;
 use winit::{
@@ -38,7 +38,9 @@ fn main() {
 
     #[derive(Clone, Copy)]
     enum PLACE {
-        BODY, FACE, HAIR
+        BODY,
+        FACE,
+        HAIR,
     }
 
     #[derive(Clone, Copy)]
@@ -65,26 +67,38 @@ fn main() {
     }
 
     #[derive(Clone, Copy)]
-    struct ShaderContext{
+    struct ShaderContext {
         uv: Vec2,
-        normal: Vec3
+        normal: Vec3,
     }
 
     impl Interpolable for ShaderContext {
         fn new() -> Self {
-            Self { uv: Vec2::ZERO, normal: Vec3::ZERO }
+            Self {
+                uv: Vec2::ZERO,
+                normal: Vec3::ZERO,
+            }
         }
 
         fn add(self, rhs: Self) -> Self {
-            Self { uv: self.uv + rhs.uv, normal: self.normal + rhs.normal }
+            Self {
+                uv: self.uv + rhs.uv,
+                normal: self.normal + rhs.normal,
+            }
         }
 
         fn mul(self, rhs: f32) -> Self {
-            Self { uv: self.uv * rhs, normal: self.normal * rhs }
+            Self {
+                uv: self.uv * rhs,
+                normal: self.normal * rhs,
+            }
         }
 
         fn sub(self, rhs: Self) -> Self {
-            Self { uv: self.uv - rhs.uv, normal: self.normal - rhs.normal }
+            Self {
+                uv: self.uv - rhs.uv,
+                normal: self.normal - rhs.normal,
+            }
         }
     }
 
@@ -96,9 +110,9 @@ fn main() {
         let mvp = vs_uniform.proj * vs_uniform.view * vs_uniform.model;
         let model_lt = vs_uniform.model.inverse().transpose();
         context.uv = vs_input.uv;
-        let normal = mul_vec4(model_lt, Vec4::from((vs_input.normal, 1.0)));
+        let normal = model_lt * Vec4::from((vs_input.normal, 1.0));
         context.normal = Vec3::new(normal.x, normal.y, normal.z);
-        mul_vec4(mvp, Vec4::from((vs_input.pos, 1.0)))
+        mvp * Vec4::from((vs_input.pos, 1.0))
     }
 
     fn pixel_shader(ps_uniform: &PSUniform, context: &ShaderContext) -> Vec4 {
@@ -106,9 +120,9 @@ fn main() {
         let n = context.normal;
         let l = Vec3::new(1.0, 1.0, 0.85).normalize();
         let color = match ps_uniform.place {
-            PLACE::BODY => {ps_uniform.sample_2d_body.sample_2d(uv)},
-            PLACE::FACE => {ps_uniform.sample_2d_face.sample_2d(uv)},
-            PLACE::HAIR => {ps_uniform.sample_2d_hair.sample_2d(uv)},
+            PLACE::BODY => ps_uniform.sample_2d_body.sample_2d(uv),
+            PLACE::FACE => ps_uniform.sample_2d_face.sample_2d(uv),
+            PLACE::HAIR => ps_uniform.sample_2d_hair.sample_2d(uv),
         };
         // color * (n.dot(l).clamp(0.0, 1.0) + 0.1)
         color
@@ -252,7 +266,7 @@ fn main() {
                                     let new_eye = forward + camera_1.at;
                                     let new_at = new_eye - camera_1.eye + camera_1.at;
                                     camera_1.eye = forward + camera_1.at;
-                                    camera_1.at = new_at;
+                                    // camera_1.at = new_at;
                                     camera_1.set_look_at();
 
                                     vs_uniform.view = camera_1.mat_look_at;
@@ -329,8 +343,7 @@ fn main() {
                                     let rotate_vertical_mat =
                                         set_rotate(right, -theta_y * PI * ratio);
 
-                                    forward = mul_vec4(rotate_horizon_mat, forward);
-                                    forward = mul_vec4(rotate_vertical_mat, forward);
+                                    forward = rotate_vertical_mat * rotate_horizon_mat * forward;
                                     let new_forward = Vec3::new(forward.x, forward.y, forward.z);
                                     camera_1.up = right.cross(new_forward).normalize();
                                     camera_1.eye =
@@ -387,7 +400,7 @@ fn main() {
                                 vertices.extend(option_vertices.unwrap());
                             }
                         }
-                        
+
                         let face_offset = vertices.len();
                         for i in 0..qiyana_face.faces_len() {
                             let mut inputs = [VSInput::ZERO, VSInput::ZERO, VSInput::ZERO];
@@ -404,7 +417,7 @@ fn main() {
                                 vertices.extend(option_vertices.unwrap());
                             }
                         }
-                        
+
                         let hair_offset = vertices.len();
                         for i in 0..qiyana_hair.faces_len() {
                             let mut inputs = [VSInput::ZERO, VSInput::ZERO, VSInput::ZERO];
@@ -423,16 +436,17 @@ fn main() {
                         }
 
                         // let start_time = Instant::now();
-                        for i in 0..vertices.len(){
+
+                        for i in 0..vertices.len() {
                             let vertex_s = &vertices[i];
 
-                            if i == body_offset{
+                            if i == body_offset {
                                 ps_uniform.place = PLACE::BODY;
                                 test_renderer.set_ps_uniform(ps_uniform);
-                            }else if i == face_offset{
+                            } else if i == face_offset {
                                 ps_uniform.place = PLACE::FACE;
                                 test_renderer.set_ps_uniform(ps_uniform);
-                            }else if i == hair_offset{
+                            } else if i == hair_offset {
                                 ps_uniform.place = PLACE::HAIR;
                                 test_renderer.set_ps_uniform(ps_uniform);
                             }
