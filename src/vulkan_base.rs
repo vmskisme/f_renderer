@@ -1,5 +1,6 @@
 use ash::util::*;
 use ash::vk;
+use std::borrow::Borrow;
 use std::default::Default;
 use std::ffi::CStr;
 use std::time::Instant;
@@ -202,12 +203,18 @@ impl VulkanBase {
                         ..
                     } => {
                         if let Event::WindowEvent { window_id, event } = event {
-                            if let WindowEvent::MouseInput { device_id, state, button, modifiers } = event {
+                            if let WindowEvent::MouseInput {
+                                device_id,
+                                state,
+                                button,
+                                modifiers,
+                            } = event
+                            {
                                 match button {
-                                    MouseButton::Right=>{ //todo
-                                     },
-                                    MouseButton::Left=>{},
-                                    _ =>{}
+                                    MouseButton::Right => { //todo
+                                    }
+                                    MouseButton::Left => {}
+                                    _ => {}
                                 }
                             }
                         }
@@ -587,28 +594,34 @@ impl Drop for VulkanBase {
     }
 }
 
-
-
-pub struct DisplayBase{
+pub struct DisplayBase {
     width: u32,
     height: u32,
     vk_base: VulkanBase,
 }
 
+impl DisplayBase {
+    pub unsafe fn new(width: u32, height: u32) -> Self {
+        Self {
+            width: width,
+            height: height,
+            vk_base: VulkanBase::new(width, height),
+        }
+    }
 
-impl DisplayBase{
-    pub unsafe fn new(width: u32, height: u32) -> Self{
-        let base = VulkanBase::new(width, height);
-
+    pub unsafe fn render_loop<F>(&self, mut f: F) 
+    where F: FnMut(&mut Align<u8>){
+        let width = self.width;
+        let height = self.height;
         let view_ports = [vk::Viewport {
             x: 0.0,
             y: 0.0,
-            width: base.surface_resolution.width as f32,
-            height: base.surface_resolution.height as f32,
+            width: self.vk_base.surface_resolution.width as f32,
+            height: self.vk_base.surface_resolution.height as f32,
             min_depth: 0.0,
             max_depth: 1.0,
         }];
-        let scissors: [vk::Rect2D;1] = [base.surface_resolution.into()];
+        let scissors: [vk::Rect2D; 1] = [self.vk_base.surface_resolution.into()];
 
         let image_buffer_info = vk::BufferCreateInfo {
             size: (std::mem::size_of::<u8>() * (width * height * 4) as usize) as u64,
@@ -616,11 +629,18 @@ impl DisplayBase{
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
-        let image_buffer = base.device.create_buffer(&image_buffer_info, None).unwrap();
-        let image_buffer_memory_req = base.device.get_buffer_memory_requirements(image_buffer);
+        let image_buffer = self
+            .vk_base
+            .device
+            .create_buffer(&image_buffer_info, None)
+            .unwrap();
+        let image_buffer_memory_req = self
+            .vk_base
+            .device
+            .get_buffer_memory_requirements(image_buffer);
         let image_buffer_memory_index = find_memorytype_index(
             &image_buffer_memory_req,
-            &base.device_memory_properties,
+            &self.vk_base.device_memory_properties,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )
         .expect("Unable to find suitable memory type for the vertex buffer.");
@@ -630,11 +650,13 @@ impl DisplayBase{
             memory_type_index: image_buffer_memory_index,
             ..Default::default()
         };
-        let image_buffer_memory = base
+        let image_buffer_memory = self
+            .vk_base
             .device
             .allocate_memory(&image_buffer_allocate_info, None)
             .unwrap();
-        let image_ptr = base
+        let image_ptr = self
+            .vk_base
             .device
             .map_memory(
                 image_buffer_memory,
@@ -644,14 +666,15 @@ impl DisplayBase{
             )
             .unwrap();
 
-        let image_slice: Align<u8> = Align::new(
+        let mut image_slice: Align<u8> = Align::new(
             image_ptr,
             std::mem::align_of::<u8>() as u64,
             image_buffer_memory_req.size,
         );
 
-        base.device.unmap_memory(image_buffer_memory);
-        base.device
+        self.vk_base.device.unmap_memory(image_buffer_memory);
+        self.vk_base
+            .device
             .bind_buffer_memory(image_buffer, image_buffer_memory, 0)
             .unwrap();
 
@@ -669,11 +692,178 @@ impl DisplayBase{
             })
             .build();
 
-        Self { width: width, height: height, vk_base:  base}
-    }
+        self.vk_base
+            .event_loop
+            .borrow_mut()
+            .run_return(|event, _, control_flow| {
+                *control_flow = ControlFlow::Poll;
+                match event {
+                    Event::WindowEvent {
+                        event: WindowEvent::CloseRequested,
+                        ..
+                    } => *control_flow = ControlFlow::Exit,
+                    Event::WindowEvent {
+                        event: WindowEvent::MouseWheel { delta, phase, .. },
+                        ..
+                    } => {
+                        use winit::event::MouseScrollDelta::*;
+                        match delta {
+                            LineDelta(x, y) => {}
+                            PixelDelta(p) => {}
+                        }
+                    }
+                    Event::WindowEvent {
+                        event:
+                            WindowEvent::MouseInput {
+                                button: MouseButton::Right,
+                                ..
+                            },
+                        ..
+                    } => {
+                        if let Event::WindowEvent { window_id, event } = event {
+                            if let WindowEvent::MouseInput {
+                                device_id,
+                                state,
+                                button,
+                                modifiers,
+                            } = event
+                            {}
+                        }
+                    }
+                    Event::WindowEvent {
+                        event:
+                            WindowEvent::MouseInput {
+                                button: MouseButton::Middle,
+                                ..
+                            },
+                        ..
+                    } => {
+                        if let Event::WindowEvent { window_id, event } = event {
+                            if let WindowEvent::MouseInput {
+                                device_id,
+                                state,
+                                button,
+                                modifiers,
+                            } = event
+                            {}
+                        }
+                    }
+                    Event::WindowEvent {
+                        event: WindowEvent::CursorMoved { .. },
+                        ..
+                    } => {
+                        if let Event::WindowEvent { event, .. } = event {
+                            if let WindowEvent::CursorMoved { position, .. } = event {}
+                        }
+                    }
+                    Event::MainEventsCleared => {
+                        let start_time = Instant::now();
+                        let (present_index, _) = self
+                            .vk_base
+                            .swapchain_loader
+                            .acquire_next_image(
+                                self.vk_base.swapchain,
+                                std::u64::MAX,
+                                self.vk_base.present_complete_semaphore,
+                                vk::Fence::null(),
+                            )
+                            .unwrap();
 
-    pub unsafe fn render_loop(&self){
+                        let present_images = self
+                            .vk_base
+                            .swapchain_loader
+                            .get_swapchain_images(self.vk_base.swapchain)
+                            .unwrap();
+                        
+                        f(&mut image_slice);
 
+                        let swap_chain_image = present_images[present_index as usize];
+
+                        record_submit_commandbuffer(
+                            &self.vk_base.device,
+                            self.vk_base.draw_command_buffer,
+                            self.vk_base.draw_commands_reuse_fence,
+                            self.vk_base.present_queue,
+                            &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT],
+                            &[self.vk_base.present_complete_semaphore],
+                            &[self.vk_base.rendering_complete_semaphore],
+                            |device, draw_command_buffer| {
+                                device.cmd_set_viewport(draw_command_buffer, 0, &view_ports);
+                                device.cmd_set_scissor(draw_command_buffer, 0, &scissors);
+
+                                let mut layout_transition_barriers =
+                                    vk::ImageMemoryBarrier::builder()
+                                        .image(swap_chain_image)
+                                        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                                        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                                        .old_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                                        .subresource_range(
+                                            vk::ImageSubresourceRange::builder()
+                                                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                                .layer_count(1)
+                                                .level_count(1)
+                                                .build(),
+                                        )
+                                        .build();
+
+                                device.cmd_pipeline_barrier(
+                                    draw_command_buffer,
+                                    vk::PipelineStageFlags::TRANSFER,
+                                    vk::PipelineStageFlags::TRANSFER,
+                                    vk::DependencyFlags::empty(),
+                                    &[],
+                                    &[],
+                                    &[layout_transition_barriers],
+                                );
+
+                                device.cmd_copy_buffer_to_image(
+                                    draw_command_buffer,
+                                    image_buffer,
+                                    swap_chain_image,
+                                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                                    &[buffer_region],
+                                );
+
+                                layout_transition_barriers.new_layout =
+                                    vk::ImageLayout::PRESENT_SRC_KHR;
+                                layout_transition_barriers.old_layout =
+                                    vk::ImageLayout::TRANSFER_DST_OPTIMAL;
+
+                                device.cmd_pipeline_barrier(
+                                    draw_command_buffer,
+                                    vk::PipelineStageFlags::TRANSFER,
+                                    vk::PipelineStageFlags::TRANSFER,
+                                    vk::DependencyFlags::empty(),
+                                    &[],
+                                    &[],
+                                    &[layout_transition_barriers],
+                                );
+                            },
+                        );
+                        //let mut present_info_err = mem::zeroed();
+                        let wait_semaphors = [self.vk_base.rendering_complete_semaphore];
+                        let swapchains = [self.vk_base.swapchain];
+                        let image_indices = [present_index];
+                        let present_info = vk::PresentInfoKHR::builder()
+                            .wait_semaphores(&wait_semaphors) // &base.rendering_complete_semaphore)
+                            .swapchains(&swapchains)
+                            .image_indices(&image_indices)
+                            .build();
+
+                        self.vk_base
+                            .swapchain_loader
+                            .queue_present(self.vk_base.present_queue, &present_info)
+                            .unwrap();
+
+                        let elapsed_time = start_time.elapsed();
+                        println!("fps: {}", 1.0 / elapsed_time.as_secs_f32());
+                    }
+                    _ => (),
+                }
+            });
+
+        self.vk_base.device.device_wait_idle().unwrap();
+        self.vk_base.device.free_memory(image_buffer_memory, None);
+        self.vk_base.device.destroy_buffer(image_buffer, None);
     }
 }
-
