@@ -124,7 +124,7 @@ where ShaderContext: Interpolable + Clone + Copy {
         new_vertex
     }
 
-    pub fn geometry_processing(&self, vs_inputs: &[VSInput; 3]) -> Option<Vec<Vec<Vertex<ShaderContext>>>> {
+    pub fn geometry_processing(&self, vs_inputs: &[VSInput; 3]) -> Option<Vec<[Vertex<ShaderContext>;3]>> {
         let mut vertices = vec![];
 
         for i in 0..3 {
@@ -238,7 +238,7 @@ where ShaderContext: Interpolable + Clone + Copy {
         }
 
         if valid_vertices.len() == 3 {
-            triangles.push(valid_vertices);
+            triangles.push([valid_vertices[0], valid_vertices[1], valid_vertices[2]]);
             return Some(triangles);
         }
 
@@ -246,19 +246,19 @@ where ShaderContext: Interpolable + Clone + Copy {
         while last_vertex_index > 3 {
             let a = valid_vertices[last_vertex_index];
             let b = valid_vertices[last_vertex_index - 1];
-            triangles.push(vec![valid_vertices[0], b, a]);
+            triangles.push([valid_vertices[0], b, a]);
             last_vertex_index -= 1;
         }
 
         let a = valid_vertices[0];
         let b = valid_vertices[2];
         let c = valid_vertices[3];
-        triangles.push(vec![a, b, c]);
+        triangles.push([a, b, c]);
 
         let c = valid_vertices[2];
         let b = valid_vertices[1];
         let a = valid_vertices[0];
-        triangles.push(vec![a, b, c]);
+        triangles.push([a, b, c]);
 
         Some(triangles)
     }
@@ -267,7 +267,7 @@ where ShaderContext: Interpolable + Clone + Copy {
         &self,
         width_range: (i32, i32),
         height_range: (i32, i32),
-        triangle: &Vec<Vertex<ShaderContext>>,
+        triangle: &[Vertex<ShaderContext>;3],
         frame_buffer: &mut FrameBuffer,
         depth_buffer: &mut Vec<Vec<f32>>,
     ) {

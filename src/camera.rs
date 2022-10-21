@@ -18,7 +18,9 @@ impl Camera {
         }
     }
 
-    pub fn set_look_at(&mut self){
+    pub fn cal_look_at(&mut self) -> Mat4{
         self.mat_look_at = set_look_at(self.eye, self.at, self.up);
+
+        self.mat_look_at
     }
 }

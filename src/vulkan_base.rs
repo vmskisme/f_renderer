@@ -234,7 +234,7 @@ impl VulkanBase {
         unsafe {
             let event_loop = EventLoop::new();
             let window = WindowBuilder::new()
-                .with_title("Ash - Example")
+                .with_title("f_render")
                 .with_inner_size(winit::dpi::PhysicalSize::new(
                     f64::from(window_width),
                     f64::from(window_height),

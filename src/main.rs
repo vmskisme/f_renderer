@@ -26,8 +26,8 @@ use winit::{
 };
 
 fn main() {
-    const WIDTH: u32 = 960;
-    const HEIGHT: u32 = 540;
+    const WIDTH: u32 = 1920;
+    const HEIGHT: u32 = 1080;
 
     #[derive(Clone, Copy)]
     struct VSUniform {
@@ -266,8 +266,8 @@ fn main() {
                                     let new_eye = forward + camera_1.at;
                                     let new_at = new_eye - camera_1.eye + camera_1.at;
                                     camera_1.eye = forward + camera_1.at;
-                                    // camera_1.at = new_at;
-                                    camera_1.set_look_at();
+                                    camera_1.at = new_at;
+                                    camera_1.cal_look_at();
 
                                     vs_uniform.view = camera_1.mat_look_at;
                                     test_renderer.set_vs_uniform(vs_uniform);
@@ -355,7 +355,7 @@ fn main() {
                                     camera_1.at -= offset;
                                     camera_1.eye -= offset;
                                 }
-                                camera_1.set_look_at();
+                                camera_1.cal_look_at();
                                 vs_uniform.view = camera_1.mat_look_at;
                                 test_renderer.set_vs_uniform(vs_uniform);
 
