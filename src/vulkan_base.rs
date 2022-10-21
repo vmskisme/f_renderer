@@ -588,3 +588,92 @@ impl Drop for VulkanBase {
 }
 
 
+
+pub struct DisplayBase{
+    width: u32,
+    height: u32,
+    vk_base: VulkanBase,
+}
+
+
+impl DisplayBase{
+    pub unsafe fn new(width: u32, height: u32) -> Self{
+        let base = VulkanBase::new(width, height);
+
+        let view_ports = [vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: base.surface_resolution.width as f32,
+            height: base.surface_resolution.height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        }];
+        let scissors: [vk::Rect2D;1] = [base.surface_resolution.into()];
+
+        let image_buffer_info = vk::BufferCreateInfo {
+            size: (std::mem::size_of::<u8>() * (width * height * 4) as usize) as u64,
+            usage: vk::BufferUsageFlags::TRANSFER_SRC,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            ..Default::default()
+        };
+        let image_buffer = base.device.create_buffer(&image_buffer_info, None).unwrap();
+        let image_buffer_memory_req = base.device.get_buffer_memory_requirements(image_buffer);
+        let image_buffer_memory_index = find_memorytype_index(
+            &image_buffer_memory_req,
+            &base.device_memory_properties,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        )
+        .expect("Unable to find suitable memory type for the vertex buffer.");
+
+        let image_buffer_allocate_info = vk::MemoryAllocateInfo {
+            allocation_size: image_buffer_memory_req.size,
+            memory_type_index: image_buffer_memory_index,
+            ..Default::default()
+        };
+        let image_buffer_memory = base
+            .device
+            .allocate_memory(&image_buffer_allocate_info, None)
+            .unwrap();
+        let image_ptr = base
+            .device
+            .map_memory(
+                image_buffer_memory,
+                0,
+                image_buffer_memory_req.size,
+                vk::MemoryMapFlags::empty(),
+            )
+            .unwrap();
+
+        let image_slice: Align<u8> = Align::new(
+            image_ptr,
+            std::mem::align_of::<u8>() as u64,
+            image_buffer_memory_req.size,
+        );
+
+        base.device.unmap_memory(image_buffer_memory);
+        base.device
+            .bind_buffer_memory(image_buffer, image_buffer_memory, 0)
+            .unwrap();
+
+        let buffer_region = vk::BufferImageCopy::builder()
+            .image_subresource(
+                vk::ImageSubresourceLayers::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .layer_count(1)
+                    .build(),
+            )
+            .image_extent(vk::Extent3D {
+                width: width,
+                height: height,
+                depth: 1,
+            })
+            .build();
+
+        Self { width: width, height: height, vk_base:  base}
+    }
+
+    pub unsafe fn render_loop(&self){
+
+    }
+}
+

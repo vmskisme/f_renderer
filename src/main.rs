@@ -26,8 +26,8 @@ use winit::{
 };
 
 fn main() {
-    const WIDTH: u32 = 1920;
-    const HEIGHT: u32 = 1080;
+    const WIDTH: u32 = 960;
+    const HEIGHT: u32 = 540;
 
     #[derive(Clone, Copy)]
     struct VSUniform {
@@ -218,7 +218,7 @@ fn main() {
             image_buffer_memory_req.size,
         );
 
-        image_slice.copy_from_slice(&frame_buffer.bits);
+        // image_slice.copy_from_slice(&frame_buffer.bits);
         base.device.unmap_memory(image_buffer_memory);
         base.device
             .bind_buffer_memory(image_buffer, image_buffer_memory, 0)
@@ -241,7 +241,6 @@ fn main() {
         let mut mouse_right_press = false;
         let mut mouse_middle_press = false;
         let mut cursor_pos = Vec2::new(0.0, 0.0);
-        let mut counter = 0;
 
         base.event_loop
             .borrow_mut()
@@ -451,8 +450,6 @@ fn main() {
                                 test_renderer.set_ps_uniform(ps_uniform);
                             }
 
-                            if counter == 0 {}
-
                             test_renderer.rasterization(
                                 (0, WIDTH as i32),
                                 (0, HEIGHT as i32),
@@ -461,9 +458,6 @@ fn main() {
                                 &mut depth_buffer,
                             );
                         }
-
-                        if counter == 0 {}
-                        counter = (counter + 1) % 30;
 
                         image_slice.copy_from_slice(&frame_buffer.bits);
 
