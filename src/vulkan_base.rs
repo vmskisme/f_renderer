@@ -609,8 +609,8 @@ impl DisplayBase {
         }
     }
 
-    pub unsafe fn render_loop<F>(&self, mut f: F) 
-    where F: FnMut(&mut Align<u8>){
+    pub unsafe fn render_loop<F>(&self, mut render_frunc: F) 
+    where F: FnMut(Event<()>, &mut Align<u8>){
         let width = self.width;
         let height = self.height;
         let view_ports = [vk::Viewport {
@@ -702,62 +702,7 @@ impl DisplayBase {
                         event: WindowEvent::CloseRequested,
                         ..
                     } => *control_flow = ControlFlow::Exit,
-                    Event::WindowEvent {
-                        event: WindowEvent::MouseWheel { delta, phase, .. },
-                        ..
-                    } => {
-                        use winit::event::MouseScrollDelta::*;
-                        match delta {
-                            LineDelta(x, y) => {}
-                            PixelDelta(p) => {}
-                        }
-                    }
-                    Event::WindowEvent {
-                        event:
-                            WindowEvent::MouseInput {
-                                button: MouseButton::Right,
-                                ..
-                            },
-                        ..
-                    } => {
-                        if let Event::WindowEvent { window_id, event } = event {
-                            if let WindowEvent::MouseInput {
-                                device_id,
-                                state,
-                                button,
-                                modifiers,
-                            } = event
-                            {}
-                        }
-                    }
-                    Event::WindowEvent {
-                        event:
-                            WindowEvent::MouseInput {
-                                button: MouseButton::Middle,
-                                ..
-                            },
-                        ..
-                    } => {
-                        if let Event::WindowEvent { window_id, event } = event {
-                            if let WindowEvent::MouseInput {
-                                device_id,
-                                state,
-                                button,
-                                modifiers,
-                            } = event
-                            {}
-                        }
-                    }
-                    Event::WindowEvent {
-                        event: WindowEvent::CursorMoved { .. },
-                        ..
-                    } => {
-                        if let Event::WindowEvent { event, .. } = event {
-                            if let WindowEvent::CursorMoved { position, .. } = event {}
-                        }
-                    }
                     Event::MainEventsCleared => {
-                        let start_time = Instant::now();
                         let (present_index, _) = self
                             .vk_base
                             .swapchain_loader
@@ -775,7 +720,7 @@ impl DisplayBase {
                             .get_swapchain_images(self.vk_base.swapchain)
                             .unwrap();
                         
-                        f(&mut image_slice);
+                        render_frunc(event, &mut image_slice);
 
                         let swap_chain_image = present_images[present_index as usize];
 
@@ -854,11 +799,8 @@ impl DisplayBase {
                             .swapchain_loader
                             .queue_present(self.vk_base.present_queue, &present_info)
                             .unwrap();
-
-                        let elapsed_time = start_time.elapsed();
-                        println!("fps: {}", 1.0 / elapsed_time.as_secs_f32());
                     }
-                    _ => (),
+                    _=> {render_frunc(event, &mut image_slice)}
                 }
             });
 

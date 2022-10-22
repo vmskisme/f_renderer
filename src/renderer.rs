@@ -2,7 +2,6 @@ use glam::{vec3, vec4, IVec2, UVec2, Vec2, Vec3, Vec4};
 use std::cmp::{max, min};
 use std::f32::consts::PI;
 
-
 #[inline]
 pub fn vec4_to_u8_array(v: Vec4) -> [u8; 4] {
     [
@@ -38,55 +37,16 @@ enum Plane {
     W_PLANE,
 }
 
-pub struct Renderer<VSInput, VSUniform, PSUniform, ShaderContext> {
-    w: u32,
-    h: u32,
-    vertex_shader: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4,
-    vs_uniform: VSUniform,
-    pixel_shader: fn(&PSUniform, &ShaderContext) -> Vec4,
-    ps_uniform: PSUniform,
-}
+pub struct Renderer {}
 
-impl<VSInput, VSUniform, PSUniform, ShaderContext> Renderer<VSInput, VSUniform, PSUniform, ShaderContext>
-where ShaderContext: Interpolable + Clone + Copy {
-    pub fn new(
-        w: u32,
-        h: u32,
-        vs_uniform: VSUniform,
-        vs: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4,
-        ps_uniform: PSUniform,
-        ps: fn(&PSUniform, &ShaderContext) -> Vec4,
-    ) -> Self {
-        Self {
-            w: w,
-            h: h,
-            vertex_shader: vs,
-            vs_uniform: vs_uniform,
-            pixel_shader: ps,
-            ps_uniform: ps_uniform,
-        }
-    }
-
+impl Renderer {
     const EPSILON: f32 = 1.0e-5;
 
-    pub fn set_vs_uniform(&mut self, vs_uniform: VSUniform) {
-        self.vs_uniform = vs_uniform;
-    }
-
-    pub fn set_ps_uniform(&mut self, ps_uniform: PSUniform) {
-        self.ps_uniform = ps_uniform;
-    }
-
-    pub fn set_vertex_shader(&mut self, vs: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4) {
-        self.vertex_shader = vs;
-    }
-
-    pub fn set_pixel_shader(&mut self, ps: fn(&PSUniform, &ShaderContext) -> Vec4) {
-        self.pixel_shader = ps;
-    }
-
     #[inline]
-    fn insides(plane: &Plane, vertex: &Vertex<ShaderContext>) -> bool {
+    fn insides<ShaderContext: Interpolable + Copy + Clone>(
+        plane: &Plane,
+        vertex: &Vertex<ShaderContext>,
+    ) -> bool {
         let w = vertex.pos.w;
         match plane {
             Plane::X_LEFT => vertex.pos.x >= -w,
@@ -100,7 +60,11 @@ where ShaderContext: Interpolable + Clone + Copy {
     }
 
     #[inline]
-    fn calculate_intersect_ratio(plane: &Plane, a: &Vertex<ShaderContext>, b: &Vertex<ShaderContext>) -> f32 {
+    fn calculate_intersect_ratio<ShaderContext: Interpolable + Copy + Clone>(
+        plane: &Plane,
+        a: &Vertex<ShaderContext>,
+        b: &Vertex<ShaderContext>,
+    ) -> f32 {
         let a_w = a.pos.w;
         let b_w = b.pos.w;
         match plane {
@@ -115,7 +79,11 @@ where ShaderContext: Interpolable + Clone + Copy {
     }
 
     #[inline]
-    fn vertex_intersect(a: &Vertex<ShaderContext>, b: &Vertex<ShaderContext>, ratio: f32) -> Vertex<ShaderContext> {
+    fn vertex_intersect<ShaderContext: Interpolable + Copy + Clone>(
+        a: &Vertex<ShaderContext>,
+        b: &Vertex<ShaderContext>,
+        ratio: f32,
+    ) -> Vertex<ShaderContext> {
         let mut new_vertex = Vertex::new();
         new_vertex.pos = a.pos + ratio * (b.pos - a.pos);
 
@@ -124,13 +92,19 @@ where ShaderContext: Interpolable + Clone + Copy {
         new_vertex
     }
 
-    pub fn geometry_processing(&self, vs_inputs: &[VSInput; 3]) -> Option<Vec<[Vertex<ShaderContext>;3]>> {
+    pub fn geometry_processing<ShaderContext: Interpolable + Copy + Clone, VSInput, VSUniform>(
+        width: u32,
+        height: u32,
+        vs_inputs: [VSInput; 3],
+        vertex_shader: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4,
+        vs_uniform: &VSUniform
+    ) -> Option<Vec<[Vertex<ShaderContext>; 3]>> {
         let mut vertices = vec![];
 
         for i in 0..3 {
             let mut vertex = Vertex::new();
 
-            vertex.pos = (self.vertex_shader)(&self.vs_uniform, &vs_inputs[i], &mut vertex.context);
+            vertex.pos = (vertex_shader)(vs_uniform, &vs_inputs[i], &mut vertex.context);
 
             vertices.push(vertex);
         }
@@ -230,8 +204,8 @@ where ShaderContext: Interpolable + Clone + Copy {
             vertex.pos = vertex.pos * vertex.rhw;
 
             // 计算屏幕坐标
-            vertex.spf.x = (vertex.pos.x + 1.0) * (self.w as f32) * 0.5;
-            vertex.spf.y = (1.0 - vertex.pos.y) * (self.h as f32) * 0.5;
+            vertex.spf.x = (vertex.pos.x + 1.0) * (width as f32) * 0.5;
+            vertex.spf.y = (1.0 - vertex.pos.y) * (height as f32) * 0.5;
 
             vertex.spi.x = (vertex.spf.x + 0.5) as i32;
             vertex.spi.y = (vertex.spf.y + 0.5) as i32;
@@ -263,14 +237,16 @@ where ShaderContext: Interpolable + Clone + Copy {
         Some(triangles)
     }
 
-    pub fn rasterization(
-        &self,
+    pub fn rasterization<ShaderContext, PSUniform>
+    (
         width_range: (i32, i32),
         height_range: (i32, i32),
-        triangle: &[Vertex<ShaderContext>;3],
+        triangle: &[Vertex<ShaderContext>; 3],
+        pixel_shader: fn(&PSUniform, &ShaderContext) -> Vec4,
+        ps_uniform: &PSUniform,
         frame_buffer: &mut FrameBuffer,
         depth_buffer: &mut Vec<Vec<f32>>,
-    ) {
+    )  where ShaderContext: Interpolable + Copy + Clone{
         let (mut min_x, mut max_x, mut min_y, mut max_y) = (0, 0, 0, 0);
 
         for k in 0..3 {
@@ -370,7 +346,7 @@ where ShaderContext: Interpolable + Clone + Copy {
 
                 let input = i0.mul(c0).add(i1.mul(c1)).add(i2.mul(c2));
 
-                let color = (self.pixel_shader)(&self.ps_uniform, &input);
+                let color = (pixel_shader)(ps_uniform, &input);
                 frame_buffer.set_pixel(index_x as u32, index_y as u32, vec4_to_u8_array(color));
             }
         }
@@ -379,7 +355,9 @@ where ShaderContext: Interpolable + Clone + Copy {
 
 #[derive(Clone, Copy)]
 pub struct Vertex<T>
-where T: Interpolable {
+where
+    T: Interpolable,
+{
     context: T,
     rhw: f32,      // w倒数
     pub pos: Vec4, // 坐标
@@ -387,8 +365,10 @@ where T: Interpolable {
     spi: IVec2,    // 整数屏幕坐标
 }
 
-impl<T> Vertex<T> 
-where T: Interpolable + Copy + Clone{
+impl<T> Vertex<T>
+where
+    T: Interpolable + Copy + Clone,
+{
     pub fn new() -> Self {
         Self {
             context: T::new(),
@@ -400,8 +380,7 @@ where T: Interpolable + Copy + Clone{
     }
 }
 
-
-pub trait Interpolable{
+pub trait Interpolable {
     fn new() -> Self;
 
     fn mul(self, rhs: f32) -> Self;
@@ -411,6 +390,7 @@ pub trait Interpolable{
     fn sub(self, rhs: Self) -> Self;
 }
 
+#[derive(Clone)]
 pub struct FrameBuffer {
     pub width: u32,
     pub height: u32,
@@ -447,7 +427,7 @@ impl FrameBuffer {
                         bits[index + 3] = 255;
                     }
                 }
-            },
+            }
             image::ColorType::Rgba8 => {
                 println!("rgba {}", path);
                 for y in 0..height {
@@ -459,7 +439,7 @@ impl FrameBuffer {
                         bits[index + 3] = color[index + 3];
                     }
                 }
-            },
+            }
             _ => {
                 panic!("invalid color type")
             }
