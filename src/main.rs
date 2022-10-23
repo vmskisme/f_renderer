@@ -14,15 +14,10 @@ use ash::util::*;
 pub use ash::{Device, Instance};
 use obj_loader::Model;
 use std::f32::consts::PI;
-use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Instant;
 use vulkan_base::{find_memorytype_index, record_submit_commandbuffer, VulkanBase};
+use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
 use winit::platform::run_return::EventLoopExtRunReturn;
-use winit::{
-    event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent},
-};
-
 
 fn main() {
     const WIDTH: u32 = 1920 / 1;
@@ -118,7 +113,7 @@ fn main() {
         let uv = context.uv;
         let n = context.normal;
         let l = Vec3::new(1.0, 1.0, 0.85).normalize();
-        
+
         let color = match ps_uniform.place {
             PLACE::BODY => ps_uniform.sample_2d_body.sample_2d(uv),
             PLACE::FACE => ps_uniform.sample_2d_face.sample_2d(uv),
@@ -139,8 +134,11 @@ fn main() {
     let mat_proj = set_perspective(PI * 0.25, WIDTH as f32 / HEIGHT as f32, 0.1, 100.0);
 
     let qiyana_body = Model::new("./obj/qiyana/qiyanabody.obj");
+    let body_diffuse = FrameBuffer::load_file("./obj/qiyana/qiyanabody_diffuse.tga");
     let qiyana_face = Model::new("./obj/qiyana/qiyanaface.obj");
+    let face_diffuse = FrameBuffer::load_file("./obj/qiyana/qiyanaface_diffuse.tga");
     let qiyana_hair = Model::new("./obj/qiyana/qiyanahair.obj");
+    let hair_diffuse = FrameBuffer::load_file("./obj/qiyana/qiyanahair_diffuse.tga");
 
     let mut vs_uniform = VSUniform {
         model: mat_model,
@@ -149,12 +147,32 @@ fn main() {
     };
     let mut ps_uniform = PSUniform {
         place: PLACE::HAIR,
-        sample_2d_body: &qiyana_body.diffuse_map,
-        sample_2d_face: &qiyana_face.diffuse_map,
-        sample_2d_hair: &qiyana_hair.diffuse_map,
+        sample_2d_body: &body_diffuse,
+        sample_2d_face: &face_diffuse,
+        sample_2d_hair: &hair_diffuse,
     };
 
     unsafe {
+        fn init_vertex_input(model: &Model) -> Vec<[VSInput; 3]>{
+            let mut vertices_input = vec![];
+            for i in 0..model.faces_len() {
+                let mut inputs = [VSInput::ZERO, VSInput::ZERO, VSInput::ZERO];
+                for j in 0..3 {
+                    inputs[j] = VSInput {
+                        pos: model.vert(i, j),
+                        uv: model.uv(i, j),
+                        normal: model.normal(i, j),
+                    };
+                }
+                vertices_input.push(inputs);
+            }
+            vertices_input
+        }
+
+        let body_vertices_input = init_vertex_input(&qiyana_body);
+        let face_vertices_input = init_vertex_input(&qiyana_face);
+        let hair_vertices_input = init_vertex_input(&qiyana_hair);
+    
         let mut frame_buffer = FrameBuffer::new(WIDTH, HEIGHT);
         let mut depth_buffer = vec![vec![0.0; WIDTH as usize]; HEIGHT as usize];
 
@@ -266,59 +284,45 @@ fn main() {
                     depth_buffer.fill(vec![0.0; WIDTH as usize]);
 
                     let mut vertices = vec![];
-                    
-                    for i in 0..qiyana_body.faces_len() {
-                        let mut inputs = [VSInput::ZERO, VSInput::ZERO, VSInput::ZERO];
-                        for j in 0..3 {
-                            inputs[j] = VSInput {
-                                pos: qiyana_body.vert(i, j),
-                                uv: qiyana_body.uv(i, j),
-                                normal: qiyana_body.normal(i, j),
-                            };
-                        }
-                        let option_vertices = Renderer::geometry_processing(WIDTH, HEIGHT, inputs, vertex_shader, &vs_uniform);
 
-                        if option_vertices.is_some() {
-                            vertices.extend(option_vertices.unwrap());
+                    for input in body_vertices_input.iter() {
+                        if let Some(out_vertices) = Renderer::geometry_processing(
+                            WIDTH,
+                            HEIGHT,
+                            input,
+                            vertex_shader,
+                            &vs_uniform,
+                        ) {
+                            vertices.extend(out_vertices);
                         }
-
                     }
 
                     let body_offset = vertices.len();
-                    for i in 0..qiyana_face.faces_len() {
-                        let mut inputs = [VSInput::ZERO, VSInput::ZERO, VSInput::ZERO];
-                        for j in 0..3 {
-                            inputs[j] = VSInput {
-                                pos: qiyana_face.vert(i, j),
-                                uv: qiyana_face.uv(i, j),
-                                normal: qiyana_face.normal(i, j),
-                            };
+                    for input in face_vertices_input.iter() {
+                        if let Some(out_vertices) = Renderer::geometry_processing(
+                            WIDTH,
+                            HEIGHT,
+                            input,
+                            vertex_shader,
+                            &vs_uniform,
+                        ) {
+                            vertices.extend(out_vertices);
                         }
-                        let option_vertices = Renderer::geometry_processing(WIDTH, HEIGHT, inputs, vertex_shader, &vs_uniform);
-
-                        if option_vertices.is_some() {
-                            vertices.extend(option_vertices.unwrap());
-                        }
-
                     }
 
                     let face_offset = vertices.len();
-                    for i in 0..qiyana_hair.faces_len() {
-                        let mut inputs = [VSInput::ZERO, VSInput::ZERO, VSInput::ZERO];
-                        for j in 0..3 {
-                            inputs[j] = VSInput {
-                                pos: qiyana_hair.vert(i, j),
-                                uv: qiyana_hair.uv(i, j),
-                                normal: qiyana_hair.normal(i, j),
-                            };
+                    for input in hair_vertices_input.iter() {
+                        if let Some(out_vertices) = Renderer::geometry_processing(
+                            WIDTH,
+                            HEIGHT,
+                            input,
+                            vertex_shader,
+                            &vs_uniform,
+                        ) {
+                            vertices.extend(out_vertices);
                         }
-                        let option_vertices = Renderer::geometry_processing(WIDTH, HEIGHT, inputs, vertex_shader, &vs_uniform);
-
-                        if option_vertices.is_some() {
-                            vertices.extend(option_vertices.unwrap());
-                        }
-
                     }
+
                     let hair_offset = vertices.len();
 
                     for i in 0..vertices.len() {

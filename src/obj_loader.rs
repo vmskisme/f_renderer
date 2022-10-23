@@ -9,7 +9,6 @@ pub struct Model {
     faces: Vec<Vec<UVec3>>,
     norms: Vec<Vec3>,
     uv: Vec<Vec2>,
-    pub diffuse_map: FrameBuffer,
 }
 
 impl Model {
@@ -19,9 +18,6 @@ impl Model {
             faces: vec![],
             norms: vec![],
             uv: vec![],
-            diffuse_map: FrameBuffer::load_file(
-                (path.strip_suffix(".obj").unwrap().to_string() + "_diffuse.tga").as_str(),
-            ),
         };
         
 
@@ -79,11 +75,6 @@ impl Model {
 }
 
 impl Model {
-    #[inline]
-    pub fn diffuse(&self, uv: Vec2) -> Vec4 {
-        self.diffuse_map.sample_2d(uv)
-    }
-
     #[inline]
     pub fn faces_len(&self) -> usize {
         self.faces.len()

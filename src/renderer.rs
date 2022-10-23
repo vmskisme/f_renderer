@@ -95,21 +95,18 @@ impl Renderer {
     pub fn geometry_processing<ShaderContext: Interpolable + Copy + Clone, VSInput, VSUniform>(
         width: u32,
         height: u32,
-        vs_inputs: [VSInput; 3],
+        vs_inputs: &[VSInput; 3],
         vertex_shader: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4,
         vs_uniform: &VSUniform
     ) -> Option<Vec<[Vertex<ShaderContext>; 3]>> {
-        let mut vertices = vec![];
+        let vertices = vec![Vertex::new(), Vertex::new(), Vertex::new()];
 
         for i in 0..3 {
-            let mut vertex = Vertex::new();
+            let mut vertex = vertices[i];
 
             vertex.pos = (vertex_shader)(vs_uniform, &vs_inputs[i], &mut vertex.context);
 
-            vertices.push(vertex);
         }
-
-        let mut valid_vertices = vec![];
 
         const PLANE_LIST: [Plane; 6] = [
             Plane::X_LEFT,
@@ -120,30 +117,31 @@ impl Renderer {
             Plane::Z_FAR,
             // Plane::W_PLANE, // todo
         ];
-        let mut all_inside = true;
         let mut inside_list = [
             [false; PLANE_LIST.len()],
             [false; PLANE_LIST.len()],
             [false; PLANE_LIST.len()],
         ];
+
+        let mut valid_vertices = vec![];
+
         for i in 0..3 {
-            let v = vertices[i];
+            let v = &vertices[i];
             let mut v_all_inside = true;
             for (j, plane) in PLANE_LIST.iter().enumerate() {
-                let is_inside = Self::insides(plane, &v);
+                let is_inside = Self::insides(plane, v);
                 inside_list[i][j] = is_inside;
-                all_inside &= is_inside;
                 v_all_inside &= is_inside;
             }
             if v_all_inside {
                 let vertex = vertices[i];
                 if vertex.pos.w != 0.0 {
-                    valid_vertices.push(vertex); // todo try to remove clone
+                    valid_vertices.push(vertex);
                 }
             }
         }
 
-        if !all_inside {
+        if valid_vertices.len() < 3{
             for i in 0..3 {
                 let a = &vertices[i];
                 for j in (i + 1)..3 {
@@ -178,6 +176,23 @@ impl Renderer {
 
         centroid *= 1.0 / valid_vertices.len() as f32;
 
+        // let mut fuck: Vec<(&Vertex<ShaderContext>, f32)> = valid_vertices.into_iter().map(|a|{
+        //     let forward_a = Vec2::new(a.pos.x - centroid.x, a.pos.y - centroid.y);
+        //     let mut atan_a = forward_a.y.atan2(forward_a.x);
+        //     if atan_a < 0.0 {
+        //         atan_a += PI * 2.0;
+        //     }
+        //     (a, atan_a)
+        // }).collect();
+
+        // fuck.sort_by(|a, b|{
+        //     a.1.total_cmp(&b.1)
+        // });
+
+        // let c: Vec<&Vertex<ShaderContext>> = fuck.iter().map(|x|{
+        //     x.0
+        // }).collect();
+
         valid_vertices.sort_by(|a, b| {
             let forward_a = Vec2::new(a.pos.x - centroid.x, a.pos.y - centroid.y);
             let forward_b = Vec2::new(b.pos.x - centroid.x, b.pos.y - centroid.y);
@@ -193,30 +208,32 @@ impl Renderer {
             atan_a.total_cmp(&atan_b)
         });
 
-        let mut triangles = vec![];
-
         for i in 0..valid_vertices.len() {
             let vertex = &mut valid_vertices[i];
             let w = vertex.pos.w;
             vertex.rhw = 1.0 / w;
 
-            // 齐次坐标空间 /w 归一化到单位体积 cvv
+            // normalized device coordinate
             vertex.pos = vertex.pos * vertex.rhw;
 
-            // 计算屏幕坐标
+            // screen coordinate
             vertex.spf.x = (vertex.pos.x + 1.0) * (width as f32) * 0.5;
             vertex.spf.y = (1.0 - vertex.pos.y) * (height as f32) * 0.5;
 
+            // int screen coordinate
             vertex.spi.x = (vertex.spf.x + 0.5) as i32;
             vertex.spi.y = (vertex.spf.y + 0.5) as i32;
         }
 
+
         if valid_vertices.len() == 3 {
-            triangles.push([valid_vertices[0], valid_vertices[1], valid_vertices[2]]);
-            return Some(triangles);
+            return Some(vec![[valid_vertices[0], valid_vertices[1], valid_vertices[2]]]);
         }
+        
+        let mut triangles = vec![];
 
         let mut last_vertex_index = valid_vertices.len() - 1;
+
         while last_vertex_index > 3 {
             let a = valid_vertices[last_vertex_index];
             let b = valid_vertices[last_vertex_index - 1];
@@ -237,7 +254,7 @@ impl Renderer {
         Some(triangles)
     }
 
-    pub fn rasterization<ShaderContext, PSUniform>
+    pub unsafe fn rasterization<ShaderContext, PSUniform>
     (
         width_range: (i32, i32),
         height_range: (i32, i32),
