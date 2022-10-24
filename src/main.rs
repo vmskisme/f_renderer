@@ -8,7 +8,8 @@ mod vulkan_base;
 use camera::Camera;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use matrix_util::{set_identity, set_perspective, set_rotate};
-use renderer::{FrameBuffer, Interpolable, Renderer};
+use renderer::{FrameBuffer, Renderer};
+use std::ops::{Add, Mul, Sub};
 
 use ash::util::*;
 pub use ash::{Device, Instance};
@@ -17,11 +18,12 @@ use std::f32::consts::PI;
 use std::time::Instant;
 use vulkan_base::{find_memorytype_index, record_submit_commandbuffer, VulkanBase};
 use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
-use winit::platform::run_return::EventLoopExtRunReturn;
+
 
 fn main() {
-    const WIDTH: u32 = 1920 / 1;
-    const HEIGHT: u32 = 1080 / 1;
+    const RECIPROCAL_SCALE: u32 = 2;
+    const WIDTH: u32 = 1920 / RECIPROCAL_SCALE;
+    const HEIGHT: u32 = 1080 / RECIPROCAL_SCALE;
 
     #[derive(Clone, Copy)]
     struct VSUniform {
@@ -66,53 +68,62 @@ fn main() {
         normal: Vec3,
     }
 
-    impl Interpolable for ShaderContext {
-        fn new() -> Self {
-            Self {
-                uv: Vec2::ZERO,
-                normal: Vec3::ZERO,
-            }
-        }
-
-        fn add(self, rhs: Self) -> Self {
-            Self {
-                uv: self.uv + rhs.uv,
-                normal: self.normal + rhs.normal,
-            }
-        }
-
-        fn mul(self, rhs: f32) -> Self {
+    impl Mul<f32> for ShaderContext{
+        type Output = Self;
+        fn mul(self, rhs: f32) -> Self::Output {
             Self {
                 uv: self.uv * rhs,
                 normal: self.normal * rhs,
             }
         }
+    }
 
+    impl Add for ShaderContext {
+        type Output = Self;
+        fn add(self, rhs: Self) -> Self::Output {
+            Self {
+                uv: self.uv + rhs.uv,
+                normal: self.normal + rhs.normal,
+            }
+        }
+    }
+
+    impl Sub for ShaderContext {
+        type Output = Self;
         fn sub(self, rhs: Self) -> Self {
             Self {
                 uv: self.uv - rhs.uv,
                 normal: self.normal - rhs.normal,
             }
+        }  
+    }
+
+    impl Default for ShaderContext{
+        fn default() -> Self {
+            Self {
+                uv: Vec2::ZERO,
+                normal: Vec3::ZERO,
+            }
         }
     }
 
-    fn vertex_shader(
+    let vertex_shader = |
         vs_uniform: &VSUniform,
         vs_input: &VSInput,
         context: &mut ShaderContext,
-    ) -> Vec4 {
+    | -> Vec4 {
         let mvp = vs_uniform.proj * vs_uniform.view * vs_uniform.model;
-        let model_lt = vs_uniform.model.inverse().transpose();
         context.uv = vs_input.uv;
-        let normal = model_lt * Vec4::from((vs_input.normal, 1.0));
-        context.normal = Vec3::new(normal.x, normal.y, normal.z);
+        // let model_lt = vs_uniform.model.inverse().transpose();
+        // let normal = model_lt * Vec4::from((vs_input.normal, 1.0));
+        // context.normal = Vec3::new(normal.x, normal.y, normal.z);
         mvp * Vec4::from((vs_input.pos, 1.0))
-    }
+    };
 
-    fn pixel_shader(ps_uniform: &PSUniform, context: &ShaderContext) -> Vec4 {
+    let pixel_shader = |ps_uniform: &PSUniform, context: &ShaderContext| -> Vec4 {
         let uv = context.uv;
-        let n = context.normal;
-        let l = Vec3::new(1.0, 1.0, 0.85).normalize();
+        // let n = context.normal;
+        // let l = Vec3::new(1.0, 1.0, 0.85).normalize();
 
         let color = match ps_uniform.place {
             PLACE::BODY => ps_uniform.sample_2d_body.sample_2d(uv),
@@ -121,7 +132,7 @@ fn main() {
         };
         color
         // color * (n.dot(l).clamp(0.0, 1.0) + 0.1)
-    }
+    };
 
     let mat_model = set_identity();
 
@@ -174,7 +185,7 @@ fn main() {
         let hair_vertices_input = init_vertex_input(&qiyana_hair);
     
         let mut frame_buffer = FrameBuffer::new(WIDTH, HEIGHT);
-        let mut depth_buffer = vec![vec![0.0; WIDTH as usize]; HEIGHT as usize];
+        let mut depth_buffer = vec![0.0 as f32; (WIDTH * HEIGHT) as usize];
 
         let mut mouse_right_press = false;
         let mut mouse_middle_press = false;
@@ -281,7 +292,7 @@ fn main() {
                 Event::MainEventsCleared => {
                     let start_time = Instant::now();
                     frame_buffer.fill([30, 30, 30, 255]);
-                    depth_buffer.fill(vec![0.0; WIDTH as usize]);
+                    depth_buffer.fill(0.0);
 
                     let mut vertices = vec![];
 
@@ -290,7 +301,7 @@ fn main() {
                             WIDTH,
                             HEIGHT,
                             input,
-                            vertex_shader,
+                            &vertex_shader,
                             &vs_uniform,
                         ) {
                             vertices.extend(out_vertices);
@@ -303,7 +314,7 @@ fn main() {
                             WIDTH,
                             HEIGHT,
                             input,
-                            vertex_shader,
+                            &vertex_shader,
                             &vs_uniform,
                         ) {
                             vertices.extend(out_vertices);
@@ -316,7 +327,7 @@ fn main() {
                             WIDTH,
                             HEIGHT,
                             input,
-                            vertex_shader,
+                            &vertex_shader,
                             &vs_uniform,
                         ) {
                             vertices.extend(out_vertices);
@@ -340,7 +351,7 @@ fn main() {
                             (0, WIDTH as i32),
                             (0, HEIGHT as i32),
                             vertex_s,
-                            pixel_shader,
+                            &pixel_shader,
                             &ps_uniform,
                             &mut frame_buffer,
                             &mut depth_buffer,
@@ -350,7 +361,7 @@ fn main() {
                     let elapsed_time = start_time.elapsed();
                     println!("fps: {}", 1.0 / elapsed_time.as_secs_f32());
 
-                    image_slice.copy_from_slice(&frame_buffer.bits);
+                    image_slice.copy_from_slice(frame_buffer.get_data());
                 }
                 _ => {}
             }

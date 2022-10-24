@@ -1,6 +1,7 @@
 use glam::{vec3, vec4, IVec2, UVec2, Vec2, Vec3, Vec4};
 use std::cmp::{max, min};
 use std::f32::consts::PI;
+use std::ops::{Add, Mul, Sub};
 
 #[inline]
 pub fn vec4_to_u8_array(v: Vec4) -> [u8; 4] {
@@ -43,10 +44,7 @@ impl Renderer {
     const EPSILON: f32 = 1.0e-5;
 
     #[inline]
-    fn insides<ShaderContext: Interpolable + Copy + Clone>(
-        plane: &Plane,
-        vertex: &Vertex<ShaderContext>,
-    ) -> bool {
+    fn insides<T>(plane: &Plane, vertex: &Vertex<T>) -> bool {
         let w = vertex.pos.w;
         match plane {
             Plane::X_LEFT => vertex.pos.x >= -w,
@@ -60,11 +58,7 @@ impl Renderer {
     }
 
     #[inline]
-    fn calculate_intersect_ratio<ShaderContext: Interpolable + Copy + Clone>(
-        plane: &Plane,
-        a: &Vertex<ShaderContext>,
-        b: &Vertex<ShaderContext>,
-    ) -> f32 {
+    fn calculate_intersect_ratio<T>(plane: &Plane, a: &Vertex<T>, b: &Vertex<T>) -> f32 {
         let a_w = a.pos.w;
         let b_w = b.pos.w;
         match plane {
@@ -79,33 +73,51 @@ impl Renderer {
     }
 
     #[inline]
-    fn vertex_intersect<ShaderContext: Interpolable + Copy + Clone>(
+    fn vertex_intersect<
+        ShaderContext: Add<Output = ShaderContext>
+            + Sub<Output = ShaderContext>
+            + Mul<f32, Output = ShaderContext>
+            + Copy
+            + Clone
+            + Default,
+    >(
         a: &Vertex<ShaderContext>,
         b: &Vertex<ShaderContext>,
         ratio: f32,
     ) -> Vertex<ShaderContext> {
-        let mut new_vertex = Vertex::new();
+        let mut new_vertex = Vertex::default();
         new_vertex.pos = a.pos + ratio * (b.pos - a.pos);
 
-        new_vertex.context = a.context.add((b.context.sub(a.context)).mul(ratio));
+        new_vertex.context = a.context + (b.context - a.context) * ratio;
 
         new_vertex
     }
 
-    pub fn geometry_processing<ShaderContext: Interpolable + Copy + Clone, VSInput, VSUniform>(
+    pub fn geometry_processing<
+        ShaderContext: Add<Output = ShaderContext>
+            + Sub<Output = ShaderContext>
+            + Mul<f32, Output = ShaderContext>
+            + Copy
+            + Clone
+            + Default,
+        VSInput,
+        VSUniform,
+        F: Fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4
+    >(
         width: u32,
         height: u32,
         vs_inputs: &[VSInput; 3],
-        vertex_shader: fn(&VSUniform, &VSInput, &mut ShaderContext) -> Vec4,
-        vs_uniform: &VSUniform
+        vertex_shader: &F,
+        vs_uniform: &VSUniform,
     ) -> Option<Vec<[Vertex<ShaderContext>; 3]>> {
-        let vertices = vec![Vertex::new(), Vertex::new(), Vertex::new()];
+        let mut vertices = vec![Vertex::default(), Vertex::default(), Vertex::default()];
 
         for i in 0..3 {
-            let mut vertex = vertices[i];
-
-            vertex.pos = (vertex_shader)(vs_uniform, &vs_inputs[i], &mut vertex.context);
-
+            let pos = (vertex_shader)(vs_uniform, &vs_inputs[i], &mut vertices[i].context);
+            if pos.w == 0.0 {
+                return None;
+            }
+            vertices[i].pos = pos;
         }
 
         const PLANE_LIST: [Plane; 6] = [
@@ -123,8 +135,7 @@ impl Renderer {
             [false; PLANE_LIST.len()],
         ];
 
-        let mut valid_vertices = vec![];
-
+        let mut all_insides = true;
         for i in 0..3 {
             let v = &vertices[i];
             let mut v_all_inside = true;
@@ -133,15 +144,11 @@ impl Renderer {
                 inside_list[i][j] = is_inside;
                 v_all_inside &= is_inside;
             }
-            if v_all_inside {
-                let vertex = vertices[i];
-                if vertex.pos.w != 0.0 {
-                    valid_vertices.push(vertex);
-                }
-            }
+            all_insides &= v_all_inside;
         }
 
-        if valid_vertices.len() < 3{
+        let mut valid_vertices = vec![];
+        if !all_insides {
             for i in 0..3 {
                 let a = &vertices[i];
                 for j in (i + 1)..3 {
@@ -155,12 +162,15 @@ impl Renderer {
                             let ratio = Self::calculate_intersect_ratio(&plane, &a, &b);
                             let new_vertex = Self::vertex_intersect(&a, &b, ratio);
                             if new_vertex.pos.w.abs() > Self::EPSILON {
-                                valid_vertices.push(new_vertex); // 这里的点有可能还是越界的
+                                valid_vertices.push(new_vertex);
                             }
                         }
                     }
                 }
             }
+            valid_vertices.extend(vertices);
+        } else {
+            valid_vertices = vertices;
         }
 
         if valid_vertices.len() < 3 {
@@ -176,22 +186,21 @@ impl Renderer {
 
         centroid *= 1.0 / valid_vertices.len() as f32;
 
-        // let mut fuck: Vec<(&Vertex<ShaderContext>, f32)> = valid_vertices.into_iter().map(|a|{
-        //     let forward_a = Vec2::new(a.pos.x - centroid.x, a.pos.y - centroid.y);
-        //     let mut atan_a = forward_a.y.atan2(forward_a.x);
-        //     if atan_a < 0.0 {
-        //         atan_a += PI * 2.0;
-        //     }
-        //     (a, atan_a)
-        // }).collect();
+        // let mut vertices_tuple: Vec<(Vertex<ShaderContext>, f32)> = valid_vertices
+        //     .into_iter()
+        //     .map(|a| {
+        //         let forward_a = Vec2::new(a.pos.x - centroid.x, a.pos.y - centroid.y);
+        //         let mut atan_a = forward_a.y.atan2(forward_a.x);
+        //         if atan_a < 0.0 {
+        //             atan_a += PI * 2.0;
+        //         }
+        //         (a, atan_a)
+        //     })
+        //     .collect();
 
-        // fuck.sort_by(|a, b|{
-        //     a.1.total_cmp(&b.1)
-        // });
+        // vertices_tuple.sort_by(|a, b| a.1.total_cmp(&b.1));
 
-        // let c: Vec<&Vertex<ShaderContext>> = fuck.iter().map(|x|{
-        //     x.0
-        // }).collect();
+        // let mut valid_vertices: Vec<Vertex<ShaderContext>> = vertices_tuple.into_iter().map(|x| x.0).collect();
 
         valid_vertices.sort_by(|a, b| {
             let forward_a = Vec2::new(a.pos.x - centroid.x, a.pos.y - centroid.y);
@@ -225,11 +234,14 @@ impl Renderer {
             vertex.spi.y = (vertex.spf.y + 0.5) as i32;
         }
 
-
         if valid_vertices.len() == 3 {
-            return Some(vec![[valid_vertices[0], valid_vertices[1], valid_vertices[2]]]);
+            return Some(vec![[
+                valid_vertices[0],
+                valid_vertices[1],
+                valid_vertices[2],
+            ]]);
         }
-        
+
         let mut triangles = vec![];
 
         let mut last_vertex_index = valid_vertices.len() - 1;
@@ -254,34 +266,35 @@ impl Renderer {
         Some(triangles)
     }
 
-    pub unsafe fn rasterization<ShaderContext, PSUniform>
-    (
+    pub fn rasterization<ShaderContext, PSUniform, F>(
         width_range: (i32, i32),
         height_range: (i32, i32),
         triangle: &[Vertex<ShaderContext>; 3],
-        pixel_shader: fn(&PSUniform, &ShaderContext) -> Vec4,
+        pixel_shader: &F,
         ps_uniform: &PSUniform,
         frame_buffer: &mut FrameBuffer,
-        depth_buffer: &mut Vec<Vec<f32>>,
-    )  where ShaderContext: Interpolable + Copy + Clone{
-        let (mut min_x, mut max_x, mut min_y, mut max_y) = (0, 0, 0, 0);
+        depth_buffer: &mut [f32],
+    ) where
+        ShaderContext: Add<Output = ShaderContext>
+            + Sub<Output = ShaderContext>
+            + Mul<f32, Output = ShaderContext>
+            + Copy
+            + Clone,
+        F: Fn(&PSUniform, &ShaderContext) -> Vec4,
+    {
+        let mut min_x = triangle[0].spi.x.clamp(width_range.0, width_range.1);
+        let mut max_x = min_x;
+        let mut min_y = triangle[0].spi.y.clamp(height_range.0, height_range.1);
+        let mut max_y = min_y;
 
-        for k in 0..3 {
+        for k in 1..3 {
             let vertex = &triangle[k];
 
-            if k == 0 {
-                min_x = vertex.spi.x.clamp(width_range.0, width_range.1);
-                max_x = min_x;
+            min_x = min(min_x, vertex.spi.x).clamp(width_range.0, width_range.1);
+            max_x = max(max_x, vertex.spi.x).clamp(width_range.0, width_range.1);
 
-                max_y = vertex.spi.y.clamp(height_range.0, height_range.1);
-                min_y = max_y;
-            } else {
-                min_x = min(min_x, vertex.spi.x).clamp(width_range.0, width_range.1);
-                max_x = max(max_x, vertex.spi.x).clamp(width_range.0, width_range.1);
-
-                min_y = min(min_y, vertex.spi.y).clamp(height_range.0, height_range.1);
-                max_y = max(max_y, vertex.spi.y).clamp(height_range.0, height_range.1);
-            }
+            min_y = min(min_y, vertex.spi.y).clamp(height_range.0, height_range.1);
+            max_y = max(max_y, vertex.spi.y).clamp(height_range.0, height_range.1);
         }
 
         let v01 = triangle[1].pos - triangle[0].pos;
@@ -311,8 +324,8 @@ impl Renderer {
             for cx in min_x..max_x {
                 let px = Vec2::new(cx as f32 + 0.5, cy as f32 + 0.5);
                 let index_x = (cx - width_range.0) as usize;
+
                 // Edge Equation
-                // 使用整数避免浮点误差，同时因为是左手系，所以符号取反
                 let E01 = -(cx - p0.x) * (p1.y - p0.y) + (cy - p0.y) * (p1.x - p0.x);
                 let E12 = -(cx - p1.x) * (p2.y - p1.y) + (cy - p1.y) * (p2.x - p1.x);
                 let E20 = -(cx - p2.x) * (p0.y - p2.y) + (cy - p2.y) * (p0.x - p2.x);
@@ -346,10 +359,11 @@ impl Renderer {
 
                 let rhw = vtx[0].rhw * a + vtx[1].rhw * b + vtx[2].rhw * c;
 
-                if rhw < depth_buffer[index_y][index_x] {
+                let index = index_y * width_range.1 as usize + index_x;
+                if rhw < depth_buffer[index] {
                     continue;
                 }
-                depth_buffer[index_y][index_x] = rhw;
+                depth_buffer[index] = rhw;
 
                 let w = 1.0 / if rhw != 0.0 { rhw } else { 1.0 };
 
@@ -357,11 +371,11 @@ impl Renderer {
                 let c1 = vtx[1].rhw * b * w;
                 let c2 = vtx[2].rhw * c * w;
 
-                let i0 = &vtx[0].context;
-                let i1 = &vtx[1].context;
-                let i2 = &vtx[2].context;
+                let i0 = vtx[0].context;
+                let i1 = vtx[1].context;
+                let i2 = vtx[2].context;
 
-                let input = i0.mul(c0).add(i1.mul(c1)).add(i2.mul(c2));
+                let input = i0 * c0 + i1 * c1 + i2 * c2;
 
                 let color = (pixel_shader)(ps_uniform, &input);
                 frame_buffer.set_pixel(index_x as u32, index_y as u32, vec4_to_u8_array(color));
@@ -371,24 +385,21 @@ impl Renderer {
 }
 
 #[derive(Clone, Copy)]
-pub struct Vertex<T>
-where
-    T: Interpolable,
-{
+pub struct Vertex<T> {
     context: T,
-    rhw: f32,      // w倒数
-    pub pos: Vec4, // 坐标
-    pub spf: Vec2, // 浮点数屏幕坐标
-    spi: IVec2,    // 整数屏幕坐标
+    rhw: f32, //reciprocal of w
+    pos: Vec4,
+    spf: Vec2,  // screen coordinate
+    spi: IVec2, // int screen coordinate
 }
 
-impl<T> Vertex<T>
+impl<T> Default for Vertex<T>
 where
-    T: Interpolable + Copy + Clone,
+    T: Default,
 {
-    pub fn new() -> Self {
+    fn default() -> Self {
         Self {
-            context: T::new(),
+            context: T::default(),
             rhw: 0.0,
             pos: Vec4::ZERO,
             spf: Vec2::ZERO,
@@ -397,21 +408,11 @@ where
     }
 }
 
-pub trait Interpolable {
-    fn new() -> Self;
-
-    fn mul(self, rhs: f32) -> Self;
-
-    fn add(self, rhs: Self) -> Self;
-
-    fn sub(self, rhs: Self) -> Self;
-}
-
 #[derive(Clone)]
 pub struct FrameBuffer {
-    pub width: u32,
-    pub height: u32,
-    pub bits: Vec<u8>,
+    width: u32,
+    height: u32,
+    buffer: Vec<u8>,
 }
 
 impl FrameBuffer {
@@ -419,7 +420,7 @@ impl FrameBuffer {
         return FrameBuffer {
             width: width,
             height: height,
-            bits: vec![0; (width * height * 4) as usize],
+            buffer: vec![0; (width * height * 4) as usize],
         };
     }
 
@@ -465,12 +466,16 @@ impl FrameBuffer {
         Self {
             width: image.width(),
             height: image.height(),
-            bits: bits,
+            buffer: bits,
         }
     }
 
+    pub fn get_data(&self) -> &Vec<u8> {
+        &self.buffer
+    }
+
     pub fn clear(&mut self) {
-        self.bits = vec![0; (self.width * self.height * 4) as usize];
+        self.buffer.fill(0);
     }
 
     pub fn get_size(&self) -> u32 {
@@ -478,10 +483,13 @@ impl FrameBuffer {
     }
 
     pub fn fill(&mut self, color: [u8; 4]) {
-        for i in 0..self.height {
-            for j in 0..self.width {
-                self.set_pixel(j, i, color);
+        let size = self.get_size() as usize;
+        let mut i = 0;
+        while i < size{
+            for (offset, bit) in color.iter().enumerate(){
+                self.buffer[i + offset] = *bit;
             }
+            i += 4;
         }
     }
 
@@ -490,7 +498,7 @@ impl FrameBuffer {
         let offset = (y * self.width * 4 + x * 4) as usize;
         for i in 0..4 {
             //todo 这样存y会反过来
-            self.bits[offset + i] = color[i];
+            self.buffer[offset + i] = color[i];
         }
     }
 
@@ -498,10 +506,10 @@ impl FrameBuffer {
     pub fn get_pixel(&self, x: u32, y: u32) -> [u8; 4] {
         let offset = (y * self.width * 4 + x * 4) as usize;
         [
-            self.bits[offset],
-            self.bits[offset + 1],
-            self.bits[offset + 2],
-            self.bits[offset + 3],
+            self.buffer[offset],
+            self.buffer[offset + 1],
+            self.buffer[offset + 2],
+            self.buffer[offset + 3],
         ]
     }
 
