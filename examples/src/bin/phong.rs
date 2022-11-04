@@ -1,10 +1,6 @@
-mod camera;
-mod input_controller;
-mod matrix_util;
-mod obj_loader;
-mod renderer;
-mod vulkan_base;
 
+
+use f_renderer::*;
 use camera::Camera;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use matrix_util::{set_identity, set_perspective, set_rotate};
@@ -16,12 +12,11 @@ pub use ash::{Device, Instance};
 use obj_loader::Model;
 use std::f32::consts::PI;
 use std::time::Instant;
-use vulkan_base::{find_memorytype_index, record_submit_commandbuffer, VulkanBase};
 use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
 
 
 fn main() {
-    const RECIPROCAL_SCALE: u32 = 2;
+    const RECIPROCAL_SCALE: u32 = 1;
     const WIDTH: u32 = 1920 / RECIPROCAL_SCALE;
     const HEIGHT: u32 = 1080 / RECIPROCAL_SCALE;
 
@@ -144,12 +139,12 @@ fn main() {
 
     let mat_proj = set_perspective(PI * 0.25, WIDTH as f32 / HEIGHT as f32, 0.1, 100.0);
 
-    let qiyana_body = Model::new("./obj/qiyana/qiyanabody.obj");
-    let body_diffuse = FrameBuffer::load_file("./obj/qiyana/qiyanabody_diffuse.tga");
-    let qiyana_face = Model::new("./obj/qiyana/qiyanaface.obj");
-    let face_diffuse = FrameBuffer::load_file("./obj/qiyana/qiyanaface_diffuse.tga");
-    let qiyana_hair = Model::new("./obj/qiyana/qiyanahair.obj");
-    let hair_diffuse = FrameBuffer::load_file("./obj/qiyana/qiyanahair_diffuse.tga");
+    let qiyana_body = Model::new("./assets/obj/qiyana/qiyanabody.obj");
+    let body_diffuse = FrameBuffer::load_file("./assets/obj/qiyana/qiyanabody_diffuse.tga");
+    let qiyana_face = Model::new("./assets/obj/qiyana/qiyanaface.obj");
+    let face_diffuse = FrameBuffer::load_file("./assets/obj/qiyana/qiyanaface_diffuse.tga");
+    let qiyana_hair = Model::new("./assets/obj/qiyana/qiyanahair.obj");
+    let hair_diffuse = FrameBuffer::load_file("./assets/obj/qiyana/qiyanahair_diffuse.tga");
 
     let mut vs_uniform = VSUniform {
         model: mat_model,
