@@ -4,3 +4,4 @@ pub mod matrix_util;
 pub mod obj_loader;
 pub mod renderer;
 pub mod vulkan_base;
+pub mod vector_util;

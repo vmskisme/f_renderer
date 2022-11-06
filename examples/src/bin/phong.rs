@@ -5,6 +5,8 @@ use camera::Camera;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use matrix_util::{set_identity, set_perspective, set_rotate};
 use renderer::{FrameBuffer, Renderer};
+use vector_util::{reflect};
+
 use std::ops::{Add, Mul, Sub};
 
 use ash::util::*;
@@ -13,6 +15,7 @@ use obj_loader::Model;
 use std::f32::consts::PI;
 use std::time::Instant;
 use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
+
 
 
 fn main() {
@@ -40,6 +43,7 @@ fn main() {
         sample_2d_body: &'a FrameBuffer,
         sample_2d_face: &'a FrameBuffer,
         sample_2d_hair: &'a FrameBuffer,
+        view_pos: Vec3
     }
 
     #[derive(Clone, Copy)]
@@ -61,6 +65,7 @@ fn main() {
     struct ShaderContext {
         uv: Vec2,
         normal: Vec3,
+        pos: Vec3,
     }
 
     impl Mul<f32> for ShaderContext{
@@ -69,6 +74,7 @@ fn main() {
             Self {
                 uv: self.uv * rhs,
                 normal: self.normal * rhs,
+                pos: self.pos * rhs,
             }
         }
     }
@@ -79,6 +85,7 @@ fn main() {
             Self {
                 uv: self.uv + rhs.uv,
                 normal: self.normal + rhs.normal,
+                pos: self.pos + rhs.pos,
             }
         }
     }
@@ -89,6 +96,7 @@ fn main() {
             Self {
                 uv: self.uv - rhs.uv,
                 normal: self.normal - rhs.normal,
+                pos: self.pos - rhs.pos,
             }
         }  
     }
@@ -98,6 +106,7 @@ fn main() {
             Self {
                 uv: Vec2::ZERO,
                 normal: Vec3::ZERO,
+                pos: Vec3::ZERO,
             }
         }
     }
@@ -109,24 +118,39 @@ fn main() {
     | -> Vec4 {
         let mvp = vs_uniform.proj * vs_uniform.view * vs_uniform.model;
         context.uv = vs_input.uv;
-        // let model_lt = vs_uniform.model.inverse().transpose();
-        // let normal = model_lt * Vec4::from((vs_input.normal, 1.0));
-        // context.normal = Vec3::new(normal.x, normal.y, normal.z);
+        let normal = vs_input.normal;
+        context.normal = Vec3::new(normal.x, normal.y, normal.z);
+        let pos = vs_uniform.model * Vec4::from((vs_input.pos, 1.0));
+        context.pos = Vec3::new(pos.x, pos.y, pos.z);
         mvp * Vec4::from((vs_input.pos, 1.0))
     };
 
-    let pixel_shader = |ps_uniform: &PSUniform, context: &ShaderContext| -> Vec4 {
-        let uv = context.uv;
-        // let n = context.normal;
-        // let l = Vec3::new(1.0, 1.0, 0.85).normalize();
+    const LIGHT_COLOR: Vec3 = Vec3::new(1.0, 1.0, 1.0);
+    const LIGHT_POS: Vec3 = Vec3::new(1.2, 1.0, 2.0);
 
+    const AMBIENT_STRENGTH: f32 = 0.1;
+    const SPECULAR_STRENGTH: f32 = 0.5;
+    let pixel_shader = |ps_uniform: &PSUniform, context: &ShaderContext| -> Vec4 {
+        let ambient_color = LIGHT_COLOR * AMBIENT_STRENGTH;
+
+        let normal = context.normal.normalize();
+        let light_dir = (LIGHT_POS - context.pos).normalize();
+        let diff = normal.dot(light_dir).max(0.0);
+        let diffuse = diff * LIGHT_COLOR;
+        
+        let view_dir = (ps_uniform.view_pos - context.pos).normalize();
+        let reflect_dir = reflect(-light_dir, normal);
+        let spec = view_dir.dot(reflect_dir).max(0.0).powi(32);
+        let specular = SPECULAR_STRENGTH * spec * LIGHT_COLOR;
+
+        let uv = context.uv;
         let color = match ps_uniform.place {
             PLACE::BODY => ps_uniform.sample_2d_body.sample_2d(uv),
             PLACE::FACE => ps_uniform.sample_2d_face.sample_2d(uv),
             PLACE::HAIR => ps_uniform.sample_2d_hair.sample_2d(uv),
         };
-        color
-        // color * (n.dot(l).clamp(0.0, 1.0) + 0.1)
+
+        color * Vec4::from((ambient_color + diffuse + specular, 1.0))
     };
 
     let mat_model = set_identity();
@@ -156,6 +180,7 @@ fn main() {
         sample_2d_body: &body_diffuse,
         sample_2d_face: &face_diffuse,
         sample_2d_hair: &hair_diffuse,
+        view_pos: camera_1.eye,
     };
 
     unsafe {
@@ -206,6 +231,7 @@ fn main() {
                                 camera_1.cal_look_at();
 
                                 vs_uniform.view = camera_1.mat_look_at;
+                                ps_uniform.view_pos = camera_1.eye;
                             }
                         }
                         PixelDelta(p) => {}
@@ -279,6 +305,7 @@ fn main() {
                             }
                             camera_1.cal_look_at();
                             vs_uniform.view = camera_1.mat_look_at;
+                            ps_uniform.view_pos = camera_1.eye;
 
                             cursor_pos = Vec2::new(x, y);
                         }
