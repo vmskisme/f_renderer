@@ -8,6 +8,7 @@ use wgpu::{
     Texture, TextureAspect, TextureUsages,
 };
 use winit::{dpi::PhysicalSize, event::WindowEvent, window::Window};
+use rand::{self, Rng};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -21,12 +22,19 @@ pub struct Rgba {
 impl Rgba {
     pub fn new() -> Self {
         Self {
-            r: 255,
+            r: 0,
             g: 0,
             b: 0,
             a: 255,
         }
     }
+
+    pub fn new_randomly() -> Self{
+        let mut rng = rand::thread_rng();
+        Self { b: rng.gen_range(0..=255), g: rng.gen_range(0..=255), r: rng.gen_range(0..=255), a: 255 }   
+    }
+
+    pub const WHITE: Rgba = Rgba{b: 255, g: 255, r: 255, a: 255};
 }
 
 pub struct WgpuRenderer {

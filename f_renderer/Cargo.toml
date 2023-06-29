@@ -14,3 +14,4 @@ wgpu = "0.16.0"
 bytemuck = { version = "1.13.1", features = [ "derive" ] }
 futures-lite = "1.13.0"
 image = "0.24.6"
+rand = "0.8.5"
